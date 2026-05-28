@@ -14727,7 +14727,8 @@ static void config_decode_mode(struct hevc_state_s *hevc)
 #endif
 	if (!hevc->m_ins_flag)
 		decode_mode = DECODE_MODE_SINGLE;
-	else if (vdec_frame_based(hw_to_vdec(hevc)))
+	else if (vdec_frame_based(hw_to_vdec(hevc)) &&
+		!hw_to_vdec(hevc)->slave && !hw_to_vdec(hevc)->master)
 		decode_mode =
 			DECODE_MODE_MULTI_FRAMEBASE;
 #ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
