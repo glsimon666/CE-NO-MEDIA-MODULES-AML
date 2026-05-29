@@ -573,8 +573,356 @@ static u32 parser_dolby_vision_enable = 1;
 #ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 static u32 dolby_meta_with_el;
 static u32 dolby_el_flush_th = 2;
+
+/* ── DV context save/restore for single-core TDM ──────────────────────
+ * amhevc_reset_f() resets PARSER(bit3), parser_state(bit4),
+ * VCPU(bit11), MPRED(bit18) via DOS_SW_RESET3, but NOT SAO(bit19),
+ * DBLK(bit8), IQIT(bit14), IPP(bit15).  With only 3 parser registers
+ * restored, non-alternating BL/EL frames corrupt each other's state.
+ *
+ * We dump all safe HEVC conf registers to per-layer kmalloc'd buffers
+ * on each context switch, so BL and EL always get back their own state.
+ *
+ * EXCLUDED from the table: interrupt/status registers (read-to-clear),
+ * command/trigger registers (write triggers action), indirect access
+ * registers, and legacy VLD/VCOP blocks (0x3000+).
+ */
+#define DV_HEVC_CTX_REGS			\
+	/* ASSIST core control (0x20xx) */	\
+	X(0x2001), X(0x2002), X(0x2003),	\
+	X(0x2005), X(0x2006), X(0x2007),	\
+	X(0x2008), X(0x2009), X(0x200a),	\
+	X(0x200b), X(0x200c), X(0x200d),	\
+	X(0x200e), X(0x200f), X(0x2010),	\
+	X(0x2011), X(0x2012), X(0x2014),	\
+	/* FB control */			\
+	X(0x2050), X(0x2051), X(0x2052),	\
+	X(0x2053), X(0x2054), X(0x2055),	\
+	X(0x2056), X(0x2057),			\
+	/* FB MMU map */			\
+	X(0x2066), X(0x2067), X(0x2068),	\
+	X(0x2069), X(0x206a), X(0x206b),	\
+	X(0x206c), X(0x206d), X(0x2072),	\
+	X(0x2073), X(0x2074), X(0x2075),	\
+	/* FB AV1 (for compatibility) */	\
+	X(0x207a), X(0x207b), X(0x207c),	\
+	X(0x207d), X(0x207e), X(0x207f),	\
+	X(0x2080), X(0x2081), X(0x2082),	\
+	X(0x2083), X(0x2084), X(0x2085),	\
+	/* Ring buffers (no RPTR/THRESHOLD) */	\
+	X(0x20a0), X(0x20a1), X(0x20a2),	\
+	X(0x20a4), X(0x20a6), X(0x20a7),	\
+	X(0x20a8),				\
+	/* SCRATCH registers */			\
+	X(0x20b0), X(0x20b1), X(0x20b2),	\
+	X(0x20b3), X(0x20b4), X(0x20b5),	\
+	X(0x20b6), X(0x20b7), X(0x20b8),	\
+	X(0x20b9), X(0x20ba), X(0x20bb),	\
+	X(0x20bc), X(0x20bd), X(0x20be),	\
+	X(0x20bf), X(0x20c0), X(0x20c1),	\
+	X(0x20c2), X(0x20c3), X(0x20c4),	\
+	X(0x20c5), X(0x20c6), X(0x20c7),	\
+	X(0x20c8), X(0x20c9), X(0x20ca),	\
+	X(0x20cb), X(0x20cc), X(0x20cd),	\
+	X(0x20ce), X(0x20cf), X(0x20d0),	\
+	X(0x20d1), X(0x20d2), X(0x20d3),	\
+	X(0x20d4), X(0x20d5), X(0x20d6),	\
+	X(0x20d7), X(0x20d8), X(0x20d9),	\
+	X(0x20da), X(0x20db), X(0x20dc),	\
+	X(0x20dd),				\
+	/* PARSER (0x210x - reset by SW_RESET3) —— excl INT/CMD/STATUS */ \
+	X(0x2100), X(0x2101), X(0x2102),	\
+	X(0x2103), X(0x2104), X(0x2105),	\
+	X(0x2106), X(0x2107), X(0x2108),	\
+	X(0x2109), X(0x210a), X(0x2110),	\
+	X(0x2117), X(0x2122), X(0x2123),	\
+	X(0x2124), X(0x2125), X(0x2127),	\
+	X(0x2128), X(0x2129), X(0x212a),	\
+	X(0x2134), X(0x2136), X(0x2139),	\
+	/* extended parser */			\
+	X(0x2172), X(0x2175), X(0x217e),	\
+	X(0x217f), X(0x2180), X(0x2181),	\
+	/* MPRED (0x220x - reset by SW_RESET3) —— excl DBG/INT/IMP_CMD */ \
+	X(0x2200), X(0x2201), X(0x2202),	\
+	X(0x2205), X(0x2206), X(0x2207),	\
+	X(0x2208), X(0x2209), X(0x220a),	\
+	X(0x220b), X(0x220c), X(0x220d),	\
+	X(0x220e), X(0x220f), X(0x2210),	\
+	X(0x2211), X(0x2212), X(0x2213),	\
+	X(0x2214), X(0x2215), X(0x2216),	\
+	X(0x2217), X(0x2218), X(0x2219),	\
+	X(0x221a), X(0x221b), X(0x221c),	\
+	X(0x221d), X(0x221e), X(0x221f),	\
+	X(0x2220), X(0x2221), X(0x2222),	\
+	X(0x2223), X(0x2224), X(0x2225),	\
+	X(0x2226), X(0x2227), X(0x2228),	\
+	X(0x2229), X(0x222a), X(0x222b),	\
+	X(0x222c), X(0x222d), X(0x222e),	\
+	X(0x222f), X(0x2230), X(0x2231),	\
+	X(0x2232), X(0x2233), X(0x2234),	\
+	X(0x2235), X(0x2236), X(0x2237),	\
+	X(0x2238), X(0x2239), X(0x223a),	\
+	X(0x223b), X(0x223c), X(0x223d),	\
+	X(0x223e), X(0x223f), X(0x2240),	\
+	X(0x224c), X(0x224d), X(0x224e),	\
+	X(0x224f), X(0x2258), X(0x2259),	\
+	X(0x225a), X(0x225b), X(0x225e),	\
+	X(0x225f), X(0x2260), X(0x2261),	\
+	X(0x2262), X(0x2263), X(0x2264),	\
+	X(0x2265), X(0x2266), X(0x2267),	\
+	X(0x2268), X(0x2269), X(0x226a),	\
+	X(0x226b), X(0x226c), X(0x226d),	\
+	X(0x226e), X(0x226f), X(0x2270),	\
+	X(0x2271), X(0x2272), X(0x2273),	\
+	X(0x2274), X(0x2275), X(0x2276),	\
+	X(0x2277), X(0x2278), X(0x2279),	\
+	X(0x227a), X(0x227b), X(0x227c),	\
+	X(0x227d), X(0x227e), X(0x227f),	\
+	X(0x2280), X(0x2281), X(0x2282),	\
+	X(0x2283), X(0x2284), X(0x2285),	\
+	X(0x2286), X(0x2287), X(0x2288),	\
+	X(0x2289), X(0x228a), X(0x228b),	\
+	X(0x228c), X(0x228d),			\
+	/* VCPU (0x230x - reset by SW_RESET3) —— excl MPSR/CPSR */ \
+	X(0x2300), X(0x2302), X(0x2303),	\
+	X(0x2306), X(0x2307), X(0x2308),	\
+	X(0x2309), X(0x230a), X(0x230b),	\
+	X(0x230c), X(0x230d), X(0x230e),	\
+	X(0x230f), X(0x2310), X(0x2311),	\
+	X(0x2312), X(0x2313), X(0x2314),	\
+	X(0x2315), X(0x2316), X(0x2317),	\
+	X(0x2318), X(0x2319), X(0x231a),	\
+	X(0x231b), X(0x231c), X(0x231d),	\
+	X(0x231e), X(0x231f),			\
+	X(0x2320), X(0x2322), X(0x2323),	\
+	X(0x2326), X(0x2327), X(0x2328),	\
+	X(0x2329), X(0x232a), X(0x232b),	\
+	X(0x232c), X(0x232d), X(0x232e),	\
+	X(0x232f), X(0x2330), X(0x2331),	\
+	X(0x2332), X(0x2333), X(0x2334),	\
+	X(0x2335), X(0x2336), X(0x2337),	\
+	X(0x2338), X(0x2339), X(0x233a),	\
+	X(0x233b), X(0x233c), X(0x233d),	\
+	X(0x233e), X(0x233f),			\
+	X(0x2341), X(0x2342), X(0x2343),	\
+	X(0x2351), X(0x2352), X(0x2353),	\
+	X(0x2360), X(0x2361), X(0x2362),	\
+	X(0x2370), X(0x2371), X(0x2372),	\
+	X(0x2380),				\
+	/* IPP (0x240x) */			\
+	X(0x2400), X(0x2401), X(0x2402),	\
+	X(0x2403), X(0x2404), X(0x2405),	\
+	X(0x2406), X(0x2407), X(0x2408),	\
+	X(0x2409), X(0x240a), X(0x240b),	\
+	X(0x240c), X(0x240d), X(0x240e),	\
+	X(0x2410), X(0x2411), X(0x2412),	\
+	X(0x2413), X(0x2414), X(0x2415),	\
+	X(0x2416), X(0x2418),			\
+	X(0x2422), X(0x2423),			\
+	X(0x2430), X(0x2431), X(0x2432),	\
+	X(0x2433), X(0x2434), X(0x2435),	\
+	X(0x2436), X(0x2437), X(0x2438),	\
+	X(0x247b), X(0x247c), X(0x247d),	\
+	X(0x247e), X(0x247f), X(0x2480),	\
+	X(0x2481),				\
+	X(0x2495), X(0x2496),			\
+	X(0x24a0), X(0x24a1), X(0x24a2),	\
+	X(0x24a4), X(0x24a5), X(0x24a6),	\
+	X(0x24a7), X(0x24a8), X(0x24a9),	\
+	X(0x24aa), X(0x24ab), X(0x24ac),	\
+	X(0x24ad), X(0x24ae),			\
+	X(0x24c4), X(0x24c5), X(0x24c6),	\
+	X(0x24c7), X(0x24c8), X(0x24f6),	\
+	/* DBLK (0x250x) */			\
+	X(0x2500), X(0x2501), X(0x2502),	\
+	X(0x2503), X(0x2504), X(0x2505),	\
+	X(0x2506), X(0x2507), X(0x2508),	\
+	X(0x2509), X(0x250a), X(0x250b),	\
+	X(0x250c), X(0x250d), X(0x250e),	\
+	X(0x250f), X(0x2510), X(0x2511),	\
+	X(0x2512), X(0x2513), X(0x2514),	\
+	X(0x2515), X(0x2516), X(0x2517),	\
+	X(0x2518), X(0x2519), X(0x251a),	\
+	X(0x251b), X(0x251c), X(0x251d),	\
+	X(0x251e), X(0x251f), X(0x2520),	\
+	X(0x2521), X(0x2522), X(0x2523),	\
+	X(0x2524), X(0x2525), X(0x2526),	\
+	X(0x2527), X(0x2528), X(0x2529),	\
+	X(0x252a), X(0x252b), X(0x252c),	\
+	X(0x252d), X(0x252e),			\
+	/* DBLK extended */			\
+	X(0x2540), X(0x2541), X(0x2542),	\
+	X(0x2543), X(0x2544), X(0x2545),	\
+	X(0x2546), X(0x2547), X(0x2548),	\
+	X(0x2549), X(0x254a), X(0x254b),	\
+	X(0x254c), X(0x254d), X(0x254e),	\
+	X(0x2550), X(0x2551), X(0x2552),	\
+	X(0x2553),				\
+	/* SAO (0x260x) */			\
+	X(0x2600), X(0x2601), X(0x2602),	\
+	X(0x2603), X(0x2604), X(0x2605),	\
+	X(0x2606), X(0x2607), X(0x2608),	\
+	X(0x2609), X(0x260a), X(0x260b),	\
+	X(0x260c), X(0x260d), X(0x260e),	\
+	X(0x260f), X(0x2610), X(0x2611),	\
+	X(0x2612), X(0x2613), X(0x2614),	\
+	X(0x2615), X(0x2616), X(0x2617),	\
+	X(0x2620), X(0x2621), X(0x2622),	\
+	X(0x2623), X(0x2624), X(0x2625),	\
+	X(0x2626), X(0x2627), X(0x2628),	\
+	X(0x2629), X(0x262a), X(0x262b),	\
+	X(0x262c), X(0x262d), X(0x262e),	\
+	X(0x262f),				\
+	X(0x263a), X(0x263b), X(0x263e),	\
+	/* CM / lossy / SAO MMU */		\
+	X(0x2642), X(0x2643), X(0x2644),	\
+	X(0x2645), X(0x2646), X(0x2647),	\
+	X(0x2648), X(0x2649), X(0x264a),	\
+	X(0x264b), X(0x264c), X(0x264d),	\
+	X(0x264e),				\
+	X(0x2652), X(0x2653), X(0x2654),	\
+	X(0x2655), X(0x2656), X(0x2657),	\
+	X(0x2658), X(0x2659), X(0x265a),	\
+	X(0x265e), X(0x265f),			\
+	X(0x2660), X(0x2661), X(0x2662),	\
+	X(0x2663), X(0x2664), X(0x2665),	\
+	X(0x2666), X(0x2667), X(0x2668),	\
+	X(0x2669), X(0x266a), X(0x266b),	\
+	X(0x266c), X(0x266d), X(0x266e),	\
+	X(0x266f), X(0x2670), X(0x2671),	\
+	X(0x2672), X(0x2673), X(0x2674),	\
+	X(0x2675), X(0x2676), X(0x2677),	\
+	X(0x2678), X(0x2679), X(0x267a),	\
+	X(0x267b), X(0x267c), X(0x267d),	\
+	X(0x267e), X(0x267f),			\
+	X(0x2698), X(0x2699), X(0x269a),	\
+	X(0x269b), X(0x269d),			\
+	X(0x26a0), X(0x26a1), X(0x26a2),	\
+	X(0x26a3), X(0x26a4), X(0x26a5),	\
+	X(0x26a6),				\
+	/* IQIT (0x270x) */			\
+	X(0x2700), X(0x2701),			\
+	X(0x2708), X(0x2709), X(0x270a),	\
+	X(0x270b), X(0x270c), X(0x270d),	\
+	X(0x270e), X(0x270f), X(0x2710),	\
+	X(0x2711), X(0x2712), X(0x2713),	\
+	X(0x2720), X(0x2721), X(0x2722),	\
+	X(0x2723), X(0x2733), X(0x2734),	\
+	X(0x2735), X(0x2736), X(0x2737),	\
+	X(0x2738), X(0x2739), X(0x273a),	\
+	X(0x273b), X(0x2740), X(0x2741),	\
+	X(0x2742), X(0x2743), X(0x2744),	\
+	X(0x2745), X(0x2746), X(0x2747),	\
+	X(0x2748), X(0x2749), X(0x274a),	\
+	/* MC (0x290x) */			\
+	X(0x2900), X(0x2901), X(0x2902),	\
+	X(0x2903), X(0x2904), X(0x2907),	\
+	X(0x2908), X(0x290b), X(0x290c),	\
+	X(0x290d), X(0x290e), X(0x290f),	\
+	X(0x2911), X(0x2912), X(0x2913),	\
+	X(0x2914), X(0x2915), X(0x2916),	\
+	X(0x2917), X(0x2918), X(0x2919),	\
+	X(0x291a), X(0x291b), X(0x291c),	\
+	X(0x291d), X(0x2921), X(0x2922),	\
+	X(0x2923), X(0x2924), X(0x2925),	\
+	X(0x2926), X(0x2928), X(0x2929),	\
+	X(0x292a), X(0x292b), X(0x292e),	\
+	X(0x2930), X(0x2931), X(0x2932),	\
+	X(0x2942), X(0x2944), X(0x2945),	\
+	X(0x2946), X(0x2947), X(0x2948),	\
+	X(0x2949), X(0x294a), X(0x294b),	\
+	X(0x294d), X(0x294e), X(0x294f),	\
+	X(0x2951), X(0x2952), X(0x2955),	\
+	X(0x2956), X(0x2957), X(0x2958),	\
+	X(0x2959), X(0x295a), X(0x295b),	\
+	X(0x295c), X(0x295d), X(0x295e),	\
+	X(0x295f), X(0x2960), X(0x2961),	\
+	X(0x2962), X(0x2963), X(0x2964),	\
+	X(0x2965), X(0x2966), X(0x2967),	\
+	X(0x2968), X(0x2969), X(0x296a),	\
+	X(0x296c), X(0x296d), X(0x296e),	\
+	X(0x296f), X(0x2970), X(0x2971),	\
+	X(0x2972), X(0x2973), X(0x2974),	\
+	X(0x2975), X(0x2976), X(0x2977),	\
+	X(0x2978), X(0x2979), X(0x297a),	\
+	X(0x297b), X(0x297c), X(0x297d),	\
+	X(0x297e), X(0x297f),			\
+	X(0x2980), X(0x2981), X(0x2982),	\
+	X(0x2983), X(0x2985), X(0x2986),	\
+	/* AV scratch */			\
+	X(0x29c0), X(0x29c1), X(0x29c2),	\
+	X(0x29c3), X(0x29c4), X(0x29c5),	\
+	X(0x29c6), X(0x29c7), X(0x29c8),	\
+	X(0x29c9), X(0x29ca), X(0x29cb),	\
+	X(0x29cc), X(0x29cd), X(0x29ce),	\
+	X(0x29cf), X(0x29d0), X(0x29d1),	\
+	X(0x29d2), X(0x29d3), X(0x29d4),	\
+	X(0x29d5), X(0x29d6), X(0x29d7),	\
+	X(0x29db), X(0x29dc), X(0x29dd),	\
+	X(0x29de), X(0x29df), X(0x29e0),	\
+	X(0x29e1), X(0x29e2),			\
+	X(0x29e4), X(0x29e5), X(0x29e6),	\
+	X(0x29ed), X(0x29f1)
+
+#define X(v)	v
+static const u16 dv_hevc_reg_offsets[] = {
+	DV_HEVC_CTX_REGS
+};
+#undef X
+#define DV_HEVC_NUM_REGS  ARRAY_SIZE(dv_hevc_reg_offsets)
+
+static int dv_init_ctx(struct hevc_state_s *hevc)
+{
+	int i;
+	for (i = 0; i < 2; i++) {
+		hevc->dv_ctx_save[i] = kmalloc_array(DV_HEVC_NUM_REGS,
+						     sizeof(u32), GFP_KERNEL);
+		if (!hevc->dv_ctx_save[i]) {
+			while (--i >= 0)
+				kfree(hevc->dv_ctx_save[i]);
+			return -ENOMEM;
+		}
+		memset(hevc->dv_ctx_save[i], 0, DV_HEVC_NUM_REGS * sizeof(u32));
+	}
+	hevc->dv_ctx_save_entries = DV_HEVC_NUM_REGS;
+	hevc->dv_ctx_current_layer = 0;
+	hevc->dv_ctx_next_layer = 0;
+	hevc->dv_ctx_valid[0] = 0;
+	hevc->dv_ctx_valid[1] = 0;
+	return 0;
+}
+
+static void dv_exit_ctx(struct hevc_state_s *hevc)
+{
+	int i;
+	for (i = 0; i < 2; i++) {
+		kfree(hevc->dv_ctx_save[i]);
+		hevc->dv_ctx_save[i] = NULL;
+	}
+	hevc->dv_ctx_save_entries = 0;
+}
+
+static void dv_save_context(struct hevc_state_s *hevc, int layer)
+{
+	int i;
+	uint32_t *buf = hevc->dv_ctx_save[layer];
+	if (!buf)
+		return;
+	for (i = 0; i < hevc->dv_ctx_save_entries; i++)
+		buf[i] = READ_VREG(dv_hevc_reg_offsets[i]);
+	hevc->dv_ctx_valid[layer] = 1;
+}
+
+static void dv_restore_context(struct hevc_state_s *hevc, int layer)
+{
+	int i;
+	uint32_t *buf = hevc->dv_ctx_save[layer];
+	if (!buf || !hevc->dv_ctx_valid[layer])
+		return;
+	for (i = 0; i < hevc->dv_ctx_save_entries; i++)
+		WRITE_VREG(dv_hevc_reg_offsets[i], buf[i]);
+}
 #endif
-/* this is only for h265 mmu enable */
 
 static u32 mmu_enable = 1;
 static u32 mmu_enable_force;
@@ -1847,6 +2195,11 @@ struct hevc_state_s {
 #ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 	unsigned char switch_dvlayer_flag;
 	unsigned char no_switch_dvlayer_count;
+	uint32_t *dv_ctx_save[2];
+	int dv_ctx_save_entries;
+	int dv_ctx_current_layer; /* layer being decoded (set by work fn) */
+	int dv_ctx_next_layer;    /* layer to decode next (set by ISR) */
+	int dv_ctx_valid[2];
 	unsigned char bypass_dvenl_enable;
 	unsigned char bypass_dvenl;
 #endif
@@ -2665,10 +3018,7 @@ static int front_decpic_done_update(struct hevc_state_s *hevc, uint8_t reset_fla
 		if (reset_flag) {
 			/*not multi pictures in one packe*/
 			amhevc_stop_f();
-			//save_stream_context(hevc->work_space_buf->swap_buf.buf_start);
-			hevc->HEVC_PARSER_PICTURE_SIZE_reg_val = READ_VREG(HEVC_PARSER_PICTURE_SIZE);
-			hevc->HEVC_PARSER_HEADER_INFO_reg_val = READ_VREG(HEVC_PARSER_HEADER_INFO);
-			hevc->HEVC_PARSER_HEADER_INFO2_reg_val = READ_VREG(HEVC_PARSER_HEADER_INFO2);
+			dv_save_context(hevc, hevc->dv_ctx_current_layer);
 		}
 	#endif
 	} else {
@@ -3334,6 +3684,7 @@ static void hevc_init_stru(struct hevc_state_s *hevc,
 	hevc->detbuf_adr = 0;
 	hevc->detbuf_adr_virt = NULL;
 #endif
+	dv_init_ctx(hevc);
 }
 
 static int post_picture_early(struct vdec_s *vdec, int index);
@@ -13195,6 +13546,8 @@ force_output:
 			}
 #ifdef NEW_FB_CODE
 			if (hevc->front_back_mode) {
+				hevc->dv_ctx_next_layer =
+					(dec_status == HEVC_FIND_NEXT_DVEL_NAL) ? 1 : 0;
 				front_decpic_done_update(hevc, 1);
 			}
 #endif
@@ -16775,6 +17128,7 @@ done_end:
 
 #ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 	if (hevc->switch_dvlayer_flag) {
+		hevc->switch_dvlayer_flag = 0;
 		if (vdec->slave)
 			vdec_set_next_sched(vdec, vdec->slave);
 		else if (vdec->master)
@@ -17531,13 +17885,12 @@ static void run(struct vdec_s *vdec, unsigned long mask,
 
 		//if (hevc->frontend_decoded_count>0) {
 		if (hevc->front_back_mode == 1) {
+			hevc->dv_ctx_current_layer = hevc->dv_ctx_next_layer;
 			amhevc_reset_f();
 			data32 = READ_VREG(HEVC_STREAM_CONTROL);
 			data32 = data32 | (0xf << 25) ; // arwlen_axi_max
 			WRITE_VREG(HEVC_STREAM_CONTROL, data32);
-			WRITE_VREG(HEVC_PARSER_PICTURE_SIZE, hevc->HEVC_PARSER_PICTURE_SIZE_reg_val);
-			WRITE_VREG(HEVC_PARSER_HEADER_INFO, hevc->HEVC_PARSER_HEADER_INFO_reg_val);
-			WRITE_VREG(HEVC_PARSER_HEADER_INFO2, hevc->HEVC_PARSER_HEADER_INFO2_reg_val);
+			dv_restore_context(hevc, hevc->dv_ctx_current_layer);
 		} else {
 			hevc_reset_core(vdec);
 		}
@@ -18102,6 +18455,7 @@ static int amvdec_h265_remove(struct platform_device *pdev)
 		hevc->pts_missed, hevc->pts_hit, hevc->frame_dur);
 #endif
 
+	dv_exit_ctx(hevc);
 	vfree(hevc);
 	hevc = NULL;
 	gHevc = NULL;
@@ -18505,6 +18859,9 @@ static int ammvdec_h265_probe(struct platform_device *pdev)
 			hevc_pair->shift_byte_count_lo;
 	}
 #endif
+	/* S5+slave: h265_el handles dveldec provider */
+	if (pdata->master && get_cpu_major_id() == AM_MESON_CPU_MAJOR_ID_S5)
+		pdata->vf_provider_name[0] = '\0';
 	else
 		snprintf(pdata->vf_provider_name, VDEC_PROVIDER_NAME_SIZE,
 			MULTI_INSTANCE_PROVIDER_NAME ".%02x", pdev->id & 0xff);
@@ -18817,6 +19174,12 @@ static int ammvdec_h265_probe(struct platform_device *pdev)
 		hevc->double_write_mode);
 
 	hevc->cma_dev = pdata->cma_dev;
+	/* S5+slave: h265_el handles EL decode, skip HW init */
+	if (pdata->master && get_cpu_major_id() == AM_MESON_CPU_MAJOR_ID_S5) {
+		hevc_print(hevc, 0, "S5 slave: h265_el, HW skipped\n");
+		return 0;
+	}
+
 	vh265_vdec_info_init(hevc);
 
 	if (vh265_init(pdata) < 0) {
