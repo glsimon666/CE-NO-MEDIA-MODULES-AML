@@ -1576,6 +1576,20 @@ static int amstream_open(struct inode *inode, struct file *file)
 					return -ENOMEM;
 				}
 			}
+		} else {
+			if ((port->type & PORT_TYPE_DUALDEC) ||
+				(vdec_get_debug_flags() & 0x100)) {
+				priv->vdec->slave = vdec_create(port, priv->vdec);
+
+				if (priv->vdec->slave == NULL) {
+					vdec_release(priv->vdec);
+					port->flag = 0;
+					kfree(priv);
+					pr_err("amstream: sub vdec creation failed for frame-based DV\n");
+					return -ENOMEM;
+				}
+				pr_info("amstream: created slave decoder for frame-based DV\n");
+			}
 		}
 	}
 

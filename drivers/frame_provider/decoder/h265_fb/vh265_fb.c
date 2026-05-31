@@ -1849,6 +1849,8 @@ struct hevc_state_s {
 	unsigned char no_switch_dvlayer_count;
 	unsigned char bypass_dvenl_enable;
 	unsigned char bypass_dvenl;
+	unsigned char check_dv_flag;
+	unsigned char is_dv_flag;
 #endif
 	unsigned char start_parser_type;
 	/*start_decoding_flag:
@@ -14727,9 +14729,6 @@ static void config_decode_mode(struct hevc_state_s *hevc)
 #endif
 	if (!hevc->m_ins_flag)
 		decode_mode = DECODE_MODE_SINGLE;
-	else if (vdec_frame_based(hw_to_vdec(hevc)))
-		decode_mode =
-			DECODE_MODE_MULTI_FRAMEBASE;
 #ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 	else if (vdec->slave) {
 		if (force_bypass_dvenl & 0x80000000)
@@ -14753,6 +14752,11 @@ static void config_decode_mode(struct hevc_state_s *hevc)
 		decode_mode =
 			(hevc->start_parser_type << 8)
 			| DECODE_MODE_MULTI_DVENL;
+#endif
+	else if (vdec_frame_based(hw_to_vdec(hevc)))
+		decode_mode =
+			DECODE_MODE_MULTI_FRAMEBASE;
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 #endif
 	else
 		decode_mode =
@@ -17946,6 +17950,9 @@ static int amvdec_h265_probe(struct platform_device *pdev)
 	hevc->uninit_list = 0;
 	hevc->fatal_error = 0;
 	hevc->show_frame_num = 0;
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
+	hevc->is_dv_flag = 0;
+#endif
 	hevc->frameinfo_enable = 1;
 #ifdef NEW_FB_CODE
 	hevc->front_back_mode = 0;
