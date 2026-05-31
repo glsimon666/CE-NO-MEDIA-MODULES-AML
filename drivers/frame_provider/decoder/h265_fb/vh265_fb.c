@@ -18603,6 +18603,9 @@ static int ammvdec_h265_probe(struct platform_device *pdev)
 			hevc->high_bandwidth_flag = config_val & VDEC_CFG_FLAG_HIGH_BANDWIDTH;
 			if (hevc->high_bandwidth_flag)
 				hevc_print(hevc, 0, "high bandwidth\n");
+			hevc->check_dv_flag = config_val & VDEC_CFG_FLAG_DV_AUTO_DETECT;
+			if (hevc->check_dv_flag)
+				hevc_print(hevc, 0, "decode check dv\n");
 		}
 
 		if (get_config_int(pdata->config,
