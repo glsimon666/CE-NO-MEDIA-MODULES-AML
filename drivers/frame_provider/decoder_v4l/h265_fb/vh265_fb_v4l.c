@@ -14893,8 +14893,6 @@ static void config_decode_mode(struct hevc_state_s *hevc)
 #endif
 	if (!hevc->m_ins_flag)
 		decode_mode = DECODE_MODE_SINGLE;
-	else if (vdec_frame_based(hw_to_vdec(hevc)))
-		decode_mode = DECODE_MODE_MULTI_FRAMEBASE;
 #ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 	else if (vdec->slave) {
 		if (force_bypass_dvenl & 0x80000000)
@@ -14913,6 +14911,8 @@ static void config_decode_mode(struct hevc_state_s *hevc)
 	} else if (vdec->master)
 		decode_mode = (hevc->start_parser_type << 8) | DECODE_MODE_MULTI_DVENL;
 #endif
+	else if (vdec_frame_based(hw_to_vdec(hevc)))
+		decode_mode = DECODE_MODE_MULTI_FRAMEBASE;
 	else
 		decode_mode = DECODE_MODE_MULTI_STREAMBASE;
 

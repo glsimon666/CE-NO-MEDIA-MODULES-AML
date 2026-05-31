@@ -9967,6 +9967,34 @@ static int check_hevc_cc_type(char *p_sei)
 }
 #endif
 
+#define ATSC_T35_PROV_CODE		0x0031
+#define DVB_T35_PROV_CODE		0x003B
+#define ATSC_USER_ID_CODE		0x47413934
+#define DVB_USER_ID_CODE		0x00000000
+#define DM_MD_USER_TYPE_CODE	0x09
+
+static void check_dvb_dv(struct hevc_state_s *hevc, char *p)
+{
+	u32 country_code;
+	u32 provider_code;
+	u32 user_id;
+	u32 user_type_code;
+
+	if (!hevc->check_dv_flag)
+		return;
+
+	country_code = *(p + 0);
+	provider_code = (*(p + 1) << 8) | *(p + 2);
+	user_id = (*(p + 3) << 24) | (*(p + 4) << 16) | (*(p + 5) << 8) | (*(p + 6));
+	user_type_code = *(p + 7);
+
+	if (country_code == 0xB5 &&
+		((provider_code == ATSC_T35_PROV_CODE && user_id == ATSC_USER_ID_CODE) ||
+		 (provider_code == DVB_T35_PROV_CODE && user_id == DVB_USER_ID_CODE)) &&
+		user_type_code == DM_MD_USER_TYPE_CODE)
+		hevc->is_dv_flag = true;
+}
+
 static int parse_sei(struct hevc_state_s *hevc,
 	struct PIC_s *pic, char *sei_buf, uint32_t size, bool parse_cc)
 {
@@ -10022,6 +10050,7 @@ static int parse_sei(struct hevc_state_s *hevc,
 				break;
 			case SEI_UserDataITU_T_T35:
 				p_sei = p;
+				check_dvb_dv(hevc, p);
 				if (p_sei[0] == 0xB5
 					&& p_sei[1] == 0x00
 					&& p_sei[2] == 0x3C
@@ -14634,6 +14663,10 @@ int vh265_dec_status(struct vdec_info *vstatus)
 		vstatus->status = hevc->stat | hevc->fatal_error | DECODER_ES_INPUT_UNDERRUN;
 	else
 		vstatus->status = hevc->stat | hevc->fatal_error;
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
+	if (hevc->is_dv_flag)
+		vstatus->status |= DECODER_REPORT_DV_FLAG;
+#endif
 	if (!hevc_is_support_4k() &&
 		(IS_4K_SIZE(vstatus->frame_width, vstatus->frame_height)) &&
 		((vstatus->frame_width <= 4096 && vstatus->frame_height <= 2304) ||
