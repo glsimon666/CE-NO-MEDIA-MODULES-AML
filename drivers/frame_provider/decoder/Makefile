@@ -16,3 +16,4 @@ obj-y	+=	h265_fb/
 obj-y	+=	vav1_fb/
 obj-y	+=	avs2_fb/
 obj-y	+=	h266/
+obj-y	+=	dvel_swdec/
