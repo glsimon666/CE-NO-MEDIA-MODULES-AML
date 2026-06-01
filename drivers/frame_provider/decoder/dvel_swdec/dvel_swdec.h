@@ -70,6 +70,11 @@ struct dvel_sps {
 	u8 log2_diff_max_min_tb;
 	u8 max_tb_depth;
 	u8 log2_max_trafo_size;
+	u8 log2_max_poc_lsb;
+	u8 num_short_term_ref_pic_sets;
+	bool separate_colour_plane_flag;
+	bool sample_adaptive_offset_enabled;
+	bool sps_temporal_mvp_enabled_flag;
 };
 
 struct dvel_pps {
@@ -81,6 +86,13 @@ struct dvel_pps {
 	u8 diff_cu_qp_delta_depth;
 	s8 cb_qp_offset;
 	s8 cr_qp_offset;
+	u8 num_extra_slice_header_bits;
+	bool output_flag_present;
+	bool chroma_qp_offsets_present;
+	bool deblocking_filter_control_present;
+	bool loop_filter_across_slices_enabled;
+	bool tiles_enabled;
+	bool entropy_coding_sync_enabled;
 };
 
 /* --- CABAC state --- */

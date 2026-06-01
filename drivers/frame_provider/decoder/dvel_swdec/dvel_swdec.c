@@ -209,8 +209,9 @@ static int parse_sps(struct dvel_ctx *ctx, const u8 *nal, int size)
 		return -1;
 
 	chroma_sep = br_ue(&br);  /* chroma_format_idc */
+	sps->separate_colour_plane_flag = 0;
 	if (chroma_sep == 3)
-		br_get_bits1(&br);  /* separate_colour_plane_flag */
+		sps->separate_colour_plane_flag = br_get_bits1(&br);
 	sps->chroma_format_idc = chroma_sep;
 
 	sps->pic_width_in_luma_samples = br_ue(&br);
@@ -225,7 +226,7 @@ static int parse_sps(struct dvel_ctx *ctx, const u8 *nal, int size)
 
 	sps->bit_depth = br_ue(&br) + 8;  /* bit_depth_luma_minus8 */
 	br_ue(&br);  /* bit_depth_chroma_minus8 */
-	br_ue(&br);  /* log2_max_pic_order_cnt_lsb */
+	sps->log2_max_poc_lsb = br_ue(&br) + 4;  /* log2_max_pic_order_cnt_lsb_minus4 */
 
 	sps->log2_min_cb_size = br_ue(&br) + 3;  /* log2_min_luma_coding_block_size_minus3 */
 	sps->log2_diff_max_min_cb = br_ue(&br);  /* log2_diff_max_min_luma_coding_block_size */
@@ -237,17 +238,29 @@ static int parse_sps(struct dvel_ctx *ctx, const u8 *nal, int size)
 	if (sps->log2_max_trafo_size > 5)
 		sps->log2_max_trafo_size = 5;
 
-	/* Scaling list (skip) */
-	if (br_get_bits1(&br)) {
-		/* scaling_list_enabled_flag */
-		if (br_get_bits1(&br)) {
-			/* sps_scaling_list_data_present_flag */
-			/* skip scaling list (EL doesn't use it much) */
+	/* Scaling list - properly skip if present */
+	if (br_get_bits1(&br)) {  /* scaling_list_enabled_flag */
+		if (br_get_bits1(&br)) {  /* sps_scaling_list_data_present_flag */
+			int size_id, matrix_id;
+			for (size_id = 0; size_id < 4; size_id++) {
+				int max_matrix = (size_id == 3) ? 2 : 6;
+				for (matrix_id = 0; matrix_id < max_matrix; matrix_id++) {
+					int pred = br_get_bits1(&br);  /* scaling_list_pred_mode_flag */
+					if (!pred) {
+						br_ue(&br);  /* scaling_list_pred_matrix_id_delta */
+					} else {
+						int coef_num = min(64, 1 << (4 + (size_id << 1)));
+						int j;
+						for (j = 0; j < coef_num; j++)
+							br_se(&br);  /* scaling_list_delta_coef */
+					}
+				}
+			}
 		}
 	}
 
 	br_get_bits1(&br);  /* amp_enabled_flag */
-	br_get_bits1(&br);  /* sample_adaptive_offset_enabled_flag */
+	sps->sample_adaptive_offset_enabled = br_get_bits1(&br);
 
 	if (br_get_bits1(&br)) {  /* pcm_enabled_flag */
 		br_get_bits(&br, 4);  /* pcm_sample_bit_depth_luma_minus1 */
@@ -257,11 +270,35 @@ static int parse_sps(struct dvel_ctx *ctx, const u8 *nal, int size)
 		br_get_bits1(&br);    /* pcm_loop_filter_disabled_flag */
 	}
 
-	br_ue(&br);  /* num_short_term_ref_pic_sets */
-	/* Skip short-term ref pic sets (we don't need them for EL) */
+	/* Skip short_term_ref_pic_set(s) - we don't need them for EL decode */
+	sps->num_short_term_ref_pic_sets = br_ue(&br);
+	{
+		int num_rps = sps->num_short_term_ref_pic_sets;
+		i = 0;
+		while (i < num_rps) {
+			if (i != 0 && br_get_bits1(&br)) {
+				br_get_bits1(&br);  /* delta_rps_sign */
+				br_ue(&br);         /* abs_delta_rps_minus1 */
+			} else {
+				int num_neg = br_ue(&br);
+				int num_pos = br_ue(&br);
+				int j;
+				for (j = 0; j < num_neg; j++) {
+					br_ue(&br);  /* delta_poc_s0_minus1 */
+					br_get_bits1(&br);  /* used_by_curr_pic_s0_flag */
+				}
+				for (j = 0; j < num_pos; j++) {
+					br_ue(&br);  /* delta_poc_s1_minus1 */
+					br_get_bits1(&br);  /* used_by_curr_pic_s1_flag */
+				}
+			}
+			i++;
+		}
+	}
+
 	br_get_bits1(&br);  /* long_term_ref_pics_present_flag */
 	/* Skip LT ref pics */
-	br_get_bits1(&br);  /* sps_temporal_mvp_enabled_flag */
+	ctx->sps.sps_temporal_mvp_enabled_flag = br_get_bits1(&br);  /* sps_temporal_mvp_enabled_flag */
 	br_get_bits1(&br);  /* strong_intra_smoothing_enabled_flag */
 
 	/* VUI parameters (skip) */
@@ -306,15 +343,14 @@ static int parse_pps(struct dvel_ctx *ctx, const u8 *nal, int size)
 	pps->sps_id = br_ue(&br);
 
 	pps->dependent_slice_segments = br_get_bits1(&br);
-	br_get_bits1(&br);  /* output_flag_present_flag */
-	br_get_bits(&br, 3);  /* num_extra_slice_header_bits */
+	pps->output_flag_present = br_get_bits1(&br);
+	pps->num_extra_slice_header_bits = br_get_bits(&br, 3);
 
-	br_get_bits1(&br);  /* sign_data_hiding_enabled_flag */
-	br_get_bits1(&br);  /* cabac_init_present_flag */
+	br_get_bits1(&br);  /* sign_data_hiding_enabled_flag (skip) */
 
 	pps->init_qp = br_se(&br);  /* init_qp_minus26 */
-	br_get_bits1(&br);  /* constrained_intra_pred_flag */
-	br_get_bits1(&br);  /* transform_skip_enabled_flag */
+	br_get_bits1(&br);  /* constrained_intra_pred_flag (skip) */
+	br_get_bits1(&br);  /* transform_skip_enabled_flag (skip) */
 
 	pps->cu_qp_delta_enabled = br_get_bits1(&br);
 	if (pps->cu_qp_delta_enabled)
@@ -322,22 +358,26 @@ static int parse_pps(struct dvel_ctx *ctx, const u8 *nal, int size)
 
 	pps->cb_qp_offset = br_se(&br);  /* pps_cb_qp_offset */
 	pps->cr_qp_offset = br_se(&br);  /* pps_cr_qp_offset */
-	br_get_bits1(&br);  /* pps_slice_chroma_qp_offsets_present_flag */
+	pps->chroma_qp_offsets_present = br_get_bits1(&br);
 
-	br_get_bits1(&br);  /* weighted_pred_flag */
-	br_get_bits1(&br);  /* weighted_bipred_flag */
-	br_get_bits1(&br);  /* transquant_bypass_enabled_flag */
-	br_get_bits1(&br);  /* tiles_enabled_flag */
-	br_get_bits1(&br);  /* entropy_coding_sync_enabled_flag */
+	/* weighted_pred_flag / weighted_bipred_flag / transquant_bypass_enabled */
+	br_get_bits(&br, 3);  /* skip */
 
-	if (br_get_bits1(&br)) {  /* pps_loop_filter_across_slices_enabled_flag */
-		br_get_bits1(&br);  /* pps_deblocking_filter_control_present_flag */
-		if (br_get_bits1(&br)) {
-			br_ue(&br);  /* deblocking_filter_offset */
-			br_ue(&br);  /* deblocking_filter_beta_offset */
+	/* tiles_enabled_flag */
+	pps->tiles_enabled = br_get_bits1(&br);
+	pps->entropy_coding_sync_enabled = br_get_bits1(&br);
+
+	pps->loop_filter_across_slices_enabled = br_get_bits1(&br);
+	pps->deblocking_filter_control_present = false;
+	if (pps->loop_filter_across_slices_enabled)
+		pps->deblocking_filter_control_present = br_get_bits1(&br);
+	if (pps->deblocking_filter_control_present) {
+		if (br_get_bits1(&br)) {  /* pps_deblocking_filter_disabled_flag */
+			br_se(&br);  /* pps_beta_offset_div2 */
+			br_se(&br);  /* pps_tc_offset_div2 */
 		}
 	}
-	/* Skip remainder */
+	/* Skip remainder of PPS */
 	ctx->pps_valid = true;
 
 	return 0;
@@ -376,7 +416,7 @@ static const u8 range_tab_lps[4][64] = {
  * ================================================================ */
 
 #define DVEL_CABAC_BITS 16
-#define DVEL_CABAC_MASK ((1 << DVEL_CABAC_BITS) - 1) /* 0xFFFF */
+#define DVEL_CABAC_MASK (~((1U << (DVEL_CABAC_BITS + 1)) - 1)) /* 0xFFFE0000 */
 
 /* Initialize CABAC context states from init_value and slice_qp
  * Follows HEVC spec 9.3.4.2.3 / FFmpeg cabac_init_state()
@@ -497,8 +537,13 @@ static int cabac_decode_bin(struct dvel_cabac *c, int ctx_idx)
 		c->range <<= 1;
 		c->low <<= 1;
 		if (!(c->low & DVEL_CABAC_MASK) && c->byte_pos < c->data_len) {
-			/* Refill when low's bottom CABAC_BITS bits are zero */
-			c->low += c->data[c->byte_pos++] << 1;
+			/* Refill when top (CABAC_BITS+1) bits are zero */
+			if (c->byte_pos + 1 < c->data_len) {
+				c->low += c->data[c->byte_pos++] << 9;
+				c->low += c->data[c->byte_pos++] << 1;
+			} else {
+				c->low += c->data[c->byte_pos++] << 9;
+			}
 			c->low -= DVEL_CABAC_MASK;
 		}
 	}
@@ -536,7 +581,12 @@ static int cabac_decode_terminate(struct dvel_cabac *c)
 			c->range <<= 1;
 			c->low <<= 1;
 			if (!(c->low & DVEL_CABAC_MASK) && c->byte_pos < c->data_len) {
-				c->low += c->data[c->byte_pos++] << 1;
+				if (c->byte_pos + 1 < c->data_len) {
+					c->low += c->data[c->byte_pos++] << 9;
+					c->low += c->data[c->byte_pos++] << 1;
+				} else {
+					c->low += c->data[c->byte_pos++] << 9;
+				}
 				c->low -= DVEL_CABAC_MASK;
 			}
 		}
@@ -553,11 +603,37 @@ static int cabac_decode_terminate(struct dvel_cabac *c)
  * Slice header parsing (on already-emul-removed RBSP data)
  * ================================================================ */
 
+/* Skip a short_term_ref_pic_set from the bitstream.
+ * st_rps_idx: index of this set (0-based). If !=0, prediction flag is present.
+ * Returns 0 on success.
+ */
+static int skip_short_term_ref_pic_set(struct bit_reader *br, int st_rps_idx)
+{
+	if (st_rps_idx != 0 && br_get_bits1(br)) {  /* inter_ref_pic_set_prediction_flag */
+		br_get_bits1(br);  /* delta_rps_sign */
+		br_ue(br);         /* abs_delta_rps_minus1 */
+		/* skip used_by_curr_pic/use_delta flags - we don't track NumDeltaPocs */
+	} else {
+		int num_neg = br_ue(br);
+		int num_pos = br_ue(br);
+		int j;
+		for (j = 0; j < num_neg; j++) {
+			br_ue(br);  /* delta_poc_s0_minus1 */
+			br_get_bits1(br);  /* used_by_curr_pic_s0_flag */
+		}
+		for (j = 0; j < num_pos; j++) {
+			br_ue(br);  /* delta_poc_s1_minus1 */
+			br_get_bits1(br);  /* used_by_curr_pic_s1_flag */
+		}
+	}
+	return 0;
+}
+
 /* Parse slice header from RBSP (emul already removed).
- * Returns bit position where slice header ends, or < 0 on error.
+ * Returns bit position where slice header ends (CABAC data start), or < 0 on error.
  * Output slice_type through out_slice_type.
  * Context fields updated: slice_qp, qp_y.
- * Simplified for single-slice-per-pic EL (first_slice=1, no dep slice).
+ * Fields consumed in HEVC spec order (7.3.6.1).
  */
 static int parse_slice_header_rbsp(struct dvel_ctx *ctx,
 				   const u8 *rbsp, int rbsp_size,
@@ -565,33 +641,121 @@ static int parse_slice_header_rbsp(struct dvel_ctx *ctx,
 {
 	struct bit_reader br;
 	int slice_type;
-	int first_slice;
+	int first_slice, dep_slice = 0;
+	int i;
 
 	br_init(&br, rbsp, rbsp_size);
 
 	first_slice = br_get_bits1(&br);  /* first_slice_segment_in_pic_flag */
+
+	/* skip no_output_of_prior_pics_flag - not needed for TRAIL_N/R (non-IDR) */
+
 	br_ue(&br);  /* slice_pic_parameter_set_id */
 
 	if (!first_slice) {
-		/* Not first slice in pic: dependent_slice and address */
-		int dep_slice = br_get_bits1(&br);  /* dependent_slice_segment_flag */
-		(void)dep_slice;
-		br_ue(&br);  /* slice_segment_address (u(v), simplified as ue) */
+		dep_slice = br_get_bits1(&br);  /* dependent_slice_segment_flag */
+		/* slice_segment_address: u(v) with Ceil(Log2(CtbSize/MinCbSize)) bits */
+		{
+			int addr_bits = ctx->sps.log2_ctb_size - ctx->sps.log2_min_cb_size;
+			if (addr_bits > 0)
+				br_get_bits(&br, addr_bits);
+		}
 	}
 
-	slice_type = br_ue(&br);
-	ctx->slice_qp = br_se(&br) + ctx->pps.init_qp + 26;
-	ctx->qp_y = ctx->slice_qp;
+	if (!dep_slice) {
+		/* num_extra_slice_header_bits from PPS */
+		for (i = 0; i < ctx->pps.num_extra_slice_header_bits; i++)
+			br_get_bits1(&br);
 
-	if (br_get_bits1(&br)) {  /* slice_sao_luma_flag */
-		br_get_bits1(&br);  /* sao_luma */
-		if (ctx->sps.chroma_format_idc != DVEL_CHROMA_MONO)
-			br_get_bits1(&br);  /* sao_chroma */
+		slice_type = br_ue(&br);
+
+		if (ctx->pps.output_flag_present)
+			br_get_bits1(&br);  /* pic_output_flag */
+
+		if (ctx->sps.separate_colour_plane_flag)
+			br_get_bits(&br, 2);  /* colour_plane_id */
+
+		/* slice_pic_order_cnt_lsb - always present for non-IDR (TRAIL_N/R) */
+		if (ctx->sps.log2_max_poc_lsb > 0)
+			br_get_bits(&br, ctx->sps.log2_max_poc_lsb);
+
+		/* short_term_ref_pic_set */
+		{
+			int st_rps_sps_flag = br_get_bits1(&br);
+			if (!st_rps_sps_flag) {
+				skip_short_term_ref_pic_set(&br,
+					ctx->sps.num_short_term_ref_pic_sets);
+			} else {
+				br_ue(&br);  /* short_term_ref_pic_set_idx */
+			}
+		}
+
+		/* long_term_ref_pics */
+		if (br_get_bits1(&br)) {  /* long_term_ref_pics_present_flag */
+			int num_lt_sps = br_ue(&br);
+			int num_lt_pics = br_ue(&br);
+			for (i = 0; i < num_lt_sps + num_lt_pics; i++) {
+				if (i < num_lt_sps)
+					br_get_bits(&br, ctx->sps.log2_max_poc_lsb);
+				else
+					br_get_bits(&br, ctx->sps.log2_max_poc_lsb);
+				br_get_bits1(&br);  /* used_by_curr_pic_lt_flag */
+				if (br_get_bits1(&br))  /* delta_poc_msb_present_flag */
+					br_ue(&br);  /* delta_poc_msb_cycle_lt */
+			}
+		}
+
+		/* slice_temporal_mvp_enabled_flag */
+		if (ctx->sps.sps_temporal_mvp_enabled_flag)
+			br_get_bits1(&br);
+
+		/* SAO flags (before QP delta in HEVC spec order) */
+		if (ctx->sps.sample_adaptive_offset_enabled) {
+			/* slice_sao_luma_flag (just read, not used) */
+			br_get_bits1(&br);
+			if (ctx->sps.chroma_format_idc != DVEL_CHROMA_MONO)
+				br_get_bits1(&br);  /* slice_sao_chroma_flag */
+		}
+
+		/* QP delta */
+		ctx->slice_qp = br_se(&br) + ctx->pps.init_qp + 26;
+		ctx->qp_y = ctx->slice_qp;
+
+		/* Chroma QP offset */
+		if (ctx->pps.chroma_qp_offsets_present) {
+			br_se(&br);  /* slice_cb_qp_offset */
+			br_se(&br);  /* slice_cr_qp_offset */
+		}
+
+		/* Deblocking filter */
+		if (ctx->pps.deblocking_filter_control_present) {
+			if (br_get_bits1(&br)) {  /* deblocking_filter_override_flag */
+				br_se(&br);  /* deblocking_filter_offset */
+				br_se(&br);  /* deblocking_filter_beta_offset */
+			}
+		}
+
+		/* Loop filter across slices */
+		if (ctx->pps.loop_filter_across_slices_enabled)
+			br_get_bits1(&br);  /* slice_loop_filter_across_slices_enabled_flag */
+	}
+
+	/* Entry point offsets (if tiles or entropy sync) - part of slice_segment_data */
+	if (ctx->pps.tiles_enabled || ctx->pps.entropy_coding_sync_enabled) {
+		int num_entry = br_ue(&br);  /* num_entry_point_offsets */
+		if (num_entry > 0) {
+			int offset_len = br_ue(&br) + 1;  /* offset_len_minus1 */
+			for (i = 0; i < num_entry; i++)
+				br_get_bits(&br, offset_len);  /* entry_point_offset_minus1[i] */
+		}
 	}
 
 	if (out_slice_type)
 		*out_slice_type = slice_type;
 
+	/* Return bit position. Caller rounds up to byte for CABAC offset
+	 * (byte_alignment in header ensures proper alignment).
+	 */
 	return br_bit_pos(&br);
 }
 
