@@ -13173,9 +13173,9 @@ force_output:
 					hevc->no_switch_dvlayer_count);
 #ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 				if (hevc->dvel_active && !vdec->slave && !vdec->master &&
-					dec_status == HEVC_FIND_NEXT_DVEL_NAL &&
-					vdec_frame_based(hw_to_vdec(hevc))) {
-					if (hevc->chunk && hevc->chunk->block) {
+					dec_status == HEVC_FIND_NEXT_DVEL_NAL) {
+					if (vdec_frame_based(hw_to_vdec(hevc)) &&
+						hevc->chunk && hevc->chunk->block) {
 						u32 consumed = READ_VREG(HEVC_SHIFT_BYTE_COUNT)
 							- hevc->start_shift_bytes;
 						int scan_start = (int)consumed > 8 ?
@@ -13229,6 +13229,64 @@ force_output:
 							if (need_unmap)
 								codec_mm_unmap_phyaddr(vaddr);
 						}
+					} else if (!vdec_frame_based(hw_to_vdec(hevc))) {
+						u32 stream_start = READ_VREG(HEVC_STREAM_START_ADDR);
+						u32 stream_end = READ_VREG(HEVC_STREAM_END_ADDR);
+						u32 rd_ptr = READ_VREG(HEVC_STREAM_RD_PTR);
+						u32 buf_size = stream_end - stream_start;
+						u32 offset;
+						void *vaddr;
+						u8 *data;
+						int i, payload_size;
+
+						if (buf_size <= 16 || rd_ptr < stream_start ||
+							rd_ptr >= stream_end)
+							goto dvel_skip;
+
+						offset = rd_ptr - stream_start;
+						vaddr = codec_mm_vmap(stream_start, buf_size);
+						if (!vaddr)
+							goto dvel_skip;
+
+						data = (u8 *)vaddr;
+						payload_size = 0;
+						for (i = 0; i < (int)(buf_size - offset) - 3; i++) {
+							if (data[offset + i] == 0 &&
+								data[offset + i + 1] == 0 &&
+								data[offset + i + 2] == 1) {
+								payload_size = i;
+								break;
+							}
+						}
+						if (payload_size == 0)
+							payload_size = buf_size - offset;
+
+						if (payload_size > 0 &&
+							hevc->frame_width && hevc->frame_height) {
+							int bd = hevc->bit_depth_luma ? : 8;
+							u8 *nal_buf = kmalloc(payload_size + 4,
+								GFP_KERNEL);
+							if (nal_buf) {
+								nal_buf[0] = 0;
+								nal_buf[1] = 0;
+								nal_buf[2] = 1;
+								nal_buf[3] = (u8)next_parser_type;
+								memcpy(nal_buf + 4,
+									data + offset, payload_size);
+								dvel_global_init(hevc->frame_width,
+									hevc->frame_height, bd);
+								dvel_global_decode(nal_buf,
+									payload_size + 4, hevc->curr_POC);
+								hevc_print(hevc, H265_DEBUG_DV,
+									"dvel: decoded stream EL nal poc %d "
+									"size %d\n",
+									hevc->curr_POC, payload_size + 4);
+								kfree(nal_buf);
+							}
+						}
+						codec_mm_unmap_phyaddr(vaddr);
+						dvel_skip:
+						;
 					}
 				}
 #endif
@@ -14816,8 +14874,14 @@ static void config_decode_mode(struct hevc_state_s *hevc)
 		decode_mode =
 			(hevc->start_parser_type << 8)
 			| DECODE_MODE_MULTI_DVENL;
-	if (hevc->bypass_dvenl && !vdec->slave && !vdec->master)
+	if ((hevc->bypass_dvenl || hevc->bypass_dvenl_enable) &&
+		!vdec->slave && !vdec->master) {
+		hevc->bypass_dvenl = 1;
 		hevc->dvel_active = 1;
+		decode_mode =
+			(hevc->start_parser_type << 8)
+			| DECODE_MODE_MULTI_STREAMBASE;
+	}
 #endif
 	else
 		decode_mode =
