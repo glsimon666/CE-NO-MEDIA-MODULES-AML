@@ -69,6 +69,7 @@
 #include <linux/amlogic/media/codec_mm/configs.h>
 #include "../utils/vdec_feature.h"
 #include "../utils/vdec_profile.h"
+#include "../dvel_swdec/dvel_swdec.h"
 #include "../../../media_sync/pts_server/pts_server_core.h"
 
 #define P010_ENABLE
@@ -1849,6 +1850,7 @@ struct hevc_state_s {
 	unsigned char no_switch_dvlayer_count;
 	unsigned char bypass_dvenl_enable;
 	unsigned char bypass_dvenl;
+	unsigned char dvel_active;
 #endif
 	unsigned char start_parser_type;
 	/*start_decoding_flag:
@@ -13169,6 +13171,67 @@ force_output:
 					"%s: no_switch_dvlayer_count = %d\n",
 					vdec->master ? "el" : "bl",
 					hevc->no_switch_dvlayer_count);
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
+				if (hevc->dvel_active && !vdec->slave && !vdec->master &&
+					dec_status == HEVC_FIND_NEXT_DVEL_NAL &&
+					vdec_frame_based(hw_to_vdec(hevc))) {
+					if (hevc->chunk && hevc->chunk->block) {
+						u32 consumed = READ_VREG(HEVC_SHIFT_BYTE_COUNT)
+							- hevc->start_shift_bytes;
+						int scan_start = (int)consumed > 8 ?
+							(int)consumed - 8 : 0;
+						int data_sz = (int)min(hevc->data_size,
+							(u32)(hevc->chunk->block->size
+								- hevc->data_offset));
+						void *vaddr = NULL;
+						bool need_unmap = false;
+
+						if (data_sz > 4 && consumed < (u32)data_sz) {
+							if (hevc->chunk->block->is_mapped)
+								vaddr = (u8 *)hevc->chunk->block->start_virt
+									+ hevc->data_offset;
+							else {
+								vaddr = codec_mm_vmap(
+									hevc->chunk->block->start
+									+ hevc->data_offset, data_sz);
+								need_unmap = true;
+							}
+						}
+						if (vaddr) {
+							u8 *data = (u8 *)vaddr;
+							int i;
+							for (i = scan_start; i < data_sz - 4; i++) {
+								if (data[i] == 0 && data[i+1] == 0 &&
+									data[i+2] == 1 && data[i+3] == 0xA0) {
+									int nal_end = data_sz;
+									int j;
+									for (j = i + 4; j < data_sz - 3; j++) {
+										if (data[j] == 0 && data[j+1] == 0 &&
+											data[j+2] == 1) {
+											nal_end = j;
+											break;
+										}
+									}
+									if (hevc->frame_width && hevc->frame_height) {
+										int bd = hevc->bit_depth_luma ? : 8;
+										dvel_global_init(hevc->frame_width,
+											hevc->frame_height, bd);
+										dvel_global_decode(data + i,
+											nal_end - i, hevc->curr_POC);
+										hevc_print(hevc, H265_DEBUG_DV,
+											"dvel: decoded EL nal poc %d "
+											"size %d\n",
+											hevc->curr_POC, nal_end - i);
+									}
+									break;
+								}
+							}
+							if (need_unmap)
+								codec_mm_unmap_phyaddr(vaddr);
+						}
+					}
+				}
+#endif
 				if (vdec->slave &&
 					dolby_el_flush_th != 0 &&
 					hevc->no_switch_dvlayer_count >
@@ -14753,6 +14816,8 @@ static void config_decode_mode(struct hevc_state_s *hevc)
 		decode_mode =
 			(hevc->start_parser_type << 8)
 			| DECODE_MODE_MULTI_DVENL;
+	if (hevc->bypass_dvenl && !vdec->slave && !vdec->master)
+		hevc->dvel_active = 1;
 #endif
 	else
 		decode_mode =
@@ -15298,6 +15363,12 @@ static int check_data_size(struct vdec_s *vdec)
 
 static int vh265_stop(struct hevc_state_s *hevc)
 {
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
+	if (hevc->dvel_active) {
+		dvel_global_exit();
+		hevc->dvel_active = 0;
+	}
+#endif
 	if (get_dbg_flag(hevc) &
 		H265_DEBUG_WAIT_DECODE_DONE_WHEN_STOP) {
 		int wait_timeout_count = 0;
@@ -17864,6 +17935,12 @@ static void reset(struct vdec_s *vdec)
 		(struct hevc_state_s *)vdec->private;
 	int i;
 
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
+	if (hevc->dvel_active) {
+		dvel_global_exit();
+		hevc->dvel_active = 0;
+	}
+#endif
 	cancel_work_sync(&hevc->work);
 	cancel_work_sync(&hevc->notify_work);
 	if (hevc->stat & STAT_VDEC_RUN) {

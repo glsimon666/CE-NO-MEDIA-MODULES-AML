@@ -2036,6 +2036,7 @@ int dvel_global_init(int width, int height, int bit_depth)
 
 	return 0;
 }
+EXPORT_SYMBOL(dvel_global_init);
 
 int dvel_global_decode(const u8 *nal, int size, int poc)
 {
@@ -2051,6 +2052,7 @@ int dvel_global_decode(const u8 *nal, int size, int poc)
 	dvel_frame_ready(g_dvel_ctx);
 	return 0;
 }
+EXPORT_SYMBOL(dvel_global_decode);
 
 void dvel_global_exit(void)
 {
@@ -2061,3 +2063,4 @@ void dvel_global_exit(void)
 	}
 	dvel_provider_exit();
 }
+EXPORT_SYMBOL(dvel_global_exit);
