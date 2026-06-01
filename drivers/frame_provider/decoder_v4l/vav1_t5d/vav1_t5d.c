@@ -5858,6 +5858,12 @@ static int vav1_event_cb(int type, void *data, void *op_arg)
 			req->aux_buf = pic_config->aux_data_buf;
 			req->aux_size = pic_config->aux_data_size;
 			req->dv_enhance_exist = 0;
+			/* stream-based DUALDEC: master(dveldec) is the EL decoder, force enhancement_exist */
+			{
+				struct vdec_s *vdec = hw_to_vdec(hw);
+				if (vdec && vdec_dual(vdec) && !vdec->master)
+					req->dv_enhance_exist = 1;
+			}
 		}
 		unlock_buffer_pool(hw->common.buffer_pool, flags);
 
