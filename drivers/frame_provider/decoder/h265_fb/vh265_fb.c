@@ -13230,6 +13230,11 @@ force_output:
 								codec_mm_unmap_phyaddr(vaddr);
 						}
 					}
+					WRITE_VREG(HEVC_DEC_STATUS_REG, HEVC_ACTION_DONE);
+					hevc_print(hevc, H265_DEBUG_DV,
+						"dvel: return early from DVEL NAL, "
+						"continue BL decode\n");
+					return IRQ_HANDLED;
 				}
 #endif
 				if (vdec->slave &&
