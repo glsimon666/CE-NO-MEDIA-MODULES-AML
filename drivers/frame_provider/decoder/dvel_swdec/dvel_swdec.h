@@ -79,6 +79,8 @@ struct dvel_pps {
 	bool cu_qp_delta_enabled;
 	s8 init_qp;
 	u8 diff_cu_qp_delta_depth;
+	s8 cb_qp_offset;
+	s8 cr_qp_offset;
 };
 
 /* --- CABAC state --- */

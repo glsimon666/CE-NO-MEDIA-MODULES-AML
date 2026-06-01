@@ -166,6 +166,7 @@ static int parse_sps(struct dvel_ctx *ctx, const u8 *nal, int size)
 	u8 tmp[4096];
 	int tmp_size;
 	int i, chroma_sep;
+	int max_sub_layers;
 
 	if (size > (int)sizeof(tmp))
 		return -1;
@@ -173,25 +174,35 @@ static int parse_sps(struct dvel_ctx *ctx, const u8 *nal, int size)
 	remove_emul_3bytes(nal, size, tmp, &tmp_size);
 	br_init(&br, tmp, tmp_size);
 
-	/* Skip VUI etc */
 	br_get_bits(&br, 4);  /* sps_video_parameter_set_id */
-	sps->vps_id = br_get_bits(&br, 3);  /* sps_max_sub_layers_minus1 */
+	max_sub_layers = br_get_bits(&br, 3);  /* sps_max_sub_layers_minus1 */
 	br_get_bits1(&br);  /* sps_temporal_id_nesting_flag */
 
-	/* profile_tier_level (simplified) */
+	/* profile_tier_level */
 	br_get_bits(&br, 2);  /* general_profile_space */
 	br_get_bits1(&br);    /* general_tier_flag */
 	br_get_bits(&br, 5);  /* general_profile_idc */
-	for (i = 0; i < 32; i++)
-		br_get_bits1(&br);  /* general_profile_compatibility_flag */
+	br_get_bits(&br, 32);  /* general_profile_compatibility_flags */
 	br_get_bits1(&br);    /* general_progressive_source_flag */
 	br_get_bits1(&br);    /* general_interlaced_source_flag */
 	br_get_bits1(&br);    /* general_non_packed_constraint_flag */
 	br_get_bits1(&br);    /* general_frame_only_constraint_flag */
-	br_get_bits(&br, 8);  /* general_reserved */
-	br_get_bits(&br, 2);  /* general_level_idc */
-	/* skip sub-layer profile info */
-	/* (simplified: skip remaining PTL bytes) */
+	br_get_bits(&br, 44); /* general_reserved_zero_44bits + general_reserved_zero_one_bit */
+	br_get_bits(&br, 8);  /* general_level_idc */
+	for (i = 0; i < max_sub_layers; i++) {
+		br_get_bits1(&br);  /* sub_layer_profile_present_flag */
+		br_get_bits1(&br);  /* sub_layer_level_present_flag */
+	}
+	if (max_sub_layers)
+		br_get_bits(&br, (8 - max_sub_layers) & 7);  /* reserved_zero bits alignment */
+	for (i = 0; i < max_sub_layers; i++) {
+		br_get_bits(&br, 2);  /* sub_layer_profile_space */
+		br_get_bits1(&br);    /* sub_layer_tier_flag */
+		br_get_bits(&br, 5);  /* sub_layer_profile_idc */
+		br_get_bits(&br, 32); /* sub_layer_profile_compatibility_flags */
+		br_get_bits(&br, 48); /* sub_layer_constraint_flags */
+		br_get_bits(&br, 8);  /* sub_layer_level_idc */
+	}
 
 	sps->sps_id = br_ue(&br);
 	if (sps->sps_id > 15)
@@ -216,10 +227,10 @@ static int parse_sps(struct dvel_ctx *ctx, const u8 *nal, int size)
 	br_ue(&br);  /* bit_depth_chroma_minus8 */
 	br_ue(&br);  /* log2_max_pic_order_cnt_lsb */
 
-	sps->log2_ctb_size = br_ue(&br) + 4;  /* log2_diff_max_min_coding_block_size */
-	sps->log2_min_cb_size = 4; /* FIXME: from log2_min_luma_coding_block_size_minus3 */
-	sps->log2_diff_max_min_cb = sps->log2_ctb_size - sps->log2_min_cb_size;
-	sps->log2_min_tb_size = 2; /* log2_min_luma_transform_block_size_minus2 */
+	sps->log2_min_cb_size = br_ue(&br) + 3;  /* log2_min_luma_coding_block_size_minus3 */
+	sps->log2_diff_max_min_cb = br_ue(&br);  /* log2_diff_max_min_luma_coding_block_size */
+	sps->log2_ctb_size = sps->log2_min_cb_size + sps->log2_diff_max_min_cb;
+	sps->log2_min_tb_size = br_ue(&br) + 2;  /* log2_min_luma_transform_block_size_minus2 */
 	sps->log2_diff_max_min_tb = br_ue(&br);  /* log2_diff_max_min_luma_transform_block_size */
 	sps->max_tb_depth = br_ue(&br);  /* max_transform_hierarchy_depth */
 	sps->log2_max_trafo_size = sps->log2_min_tb_size + sps->log2_diff_max_min_tb;
@@ -309,8 +320,8 @@ static int parse_pps(struct dvel_ctx *ctx, const u8 *nal, int size)
 	if (pps->cu_qp_delta_enabled)
 		pps->diff_cu_qp_delta_depth = br_ue(&br);
 
-	br_se(&br);  /* pps_cb_qp_offset */
-	br_se(&br);  /* pps_cr_qp_offset */
+	pps->cb_qp_offset = br_se(&br);  /* pps_cb_qp_offset */
+	pps->cr_qp_offset = br_se(&br);  /* pps_cr_qp_offset */
 	br_get_bits1(&br);  /* pps_slice_chroma_qp_offsets_present_flag */
 
 	br_get_bits1(&br);  /* weighted_pred_flag */
@@ -447,8 +458,8 @@ static void cabac_init(struct dvel_cabac *c,
 	if (c->byte_pos >= c->data_len)
 		return;
 	c->low += c->data[c->byte_pos++] << 10;
-	/* Add 1<<9 offset (matching even ptr alignment path) */
-	c->low += 1 << 9;
+	/* Add 1<<9 offset + 2 (matching FFmpeg CABAC_BITS=16 init) */
+	c->low += (1 << 9) + 2;
 }
 
 /* Decode one CABAC bin.
@@ -647,6 +658,38 @@ static const u8 ff_hevc_diag_scan4x4_y[16] = {
 
 /* Dequantization */
 static const u8 level_scale[] = { 40, 45, 51, 57, 64, 72 };
+
+/* HEVC spec Table 8-11: QpC = qPiTable[Clip3(0, 57, QP_Y + pps_cb/cr_qp_offset)] */
+static int dvel_chroma_qp(int qp_y, int is_cr)
+{
+	static const u8 qpi_table_cb[58] = {
+		 0,  1,  2,  3,  4,  5,  6,  7,
+		 8,  9, 10, 11, 12, 13, 14, 15,
+		16, 17, 18, 19, 20, 21, 22, 23,
+		24, 25, 26, 27, 28, 29, 29, 30,
+		31, 32, 33, 33, 34, 35, 36, 37,
+		37, 38, 39, 40, 41, 42, 42, 43,
+		44, 45, 46, 46, 47, 48, 49, 50,
+		50, 51
+	};
+	static const u8 qpi_table_cr[58] = {
+		 0,  1,  2,  3,  4,  5,  6,  7,
+		 8,  9, 10, 11, 12, 13, 14, 15,
+		16, 17, 18, 19, 20, 21, 22, 23,
+		24, 25, 26, 27, 28, 29, 30, 31,
+		32, 33, 34, 35, 36, 37, 37, 38,
+		39, 40, 41, 42, 43, 44, 45, 46,
+		47, 48, 48, 49, 50, 51, 51, 52,
+		53, 54
+	};
+
+	if (qp_y < 0)
+		qp_y = 0;
+	if (qp_y > 57)
+		qp_y = 57;
+	return is_cr ? qpi_table_cr[qp_y] : qpi_table_cb[qp_y];
+}
+
 static const u8 rem6[78] = {
 	0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3,
 	4, 5, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 1,
@@ -701,27 +744,33 @@ static int coeff_abs_level_greater2_flag_decode(struct dvel_cabac *c, int idx)
 	return cabac_decode_bin(c, 161 + idx);
 }
 
-static int coeff_abs_level_remaining_decode(struct dvel_cabac *c, int rice)
+static int coeff_abs_level_remaining_decode(struct dvel_cabac *c, int c_rice_param)
 {
 	int prefix = 0, suffix;
+	int threshold = 3 + 4 * c_rice_param;
 
 	while (cabac_decode_bypass(c)) {
 		prefix++;
-		if (prefix >= 8 + 4 * rice)
+		if (prefix >= threshold)
 			break;
 	}
-	if (prefix < 8 + 4 * rice) {
+	if (prefix < threshold) {
 		suffix = 0;
-		if (rice > 0) {
-			while (rice--)
+		if (c_rice_param > 0) {
+			int rp = c_rice_param;
+			while (rp--)
 				suffix = (suffix << 1) | cabac_decode_bypass(c);
 		}
-		return (prefix << rice) + suffix;
+		return (prefix >> c_rice_param) + suffix;
 	}
 	suffix = 0;
-	for (int i = 0; i < 8; i++)
-		suffix = (suffix << 1) | cabac_decode_bypass(c);
-	return (1 << rice) + prefix + suffix;
+	{
+		int suffix_len = prefix - 5 - (4 * c_rice_param);
+		int j;
+		for (j = 0; j < suffix_len; j++)
+			suffix = (suffix << 1) | cabac_decode_bypass(c);
+	}
+	return (1 << c_rice_param) + prefix - threshold + suffix;
 }
 
 static int coeff_sign_flag_decode(struct dvel_cabac *c)
@@ -768,7 +817,8 @@ static void last_sig_coeff_decode(struct dvel_cabac *cabac, int log2_trafo_size,
 	/* Suffix decode (if prefix > 3) */
 	if (prefix_x > 3) {
 		int suffix_len = (prefix_x >> 1) - 1;
-		for (int i = 0; i < suffix_len; i++)
+		int i;
+		for (i = 0; i < suffix_len; i++)
 			suffix_x = (suffix_x << 1) | cabac_decode_bypass(cabac);
 		*last_x = ((2 + (prefix_x & 1)) << (suffix_len)) + suffix_x;
 	} else {
@@ -777,7 +827,8 @@ static void last_sig_coeff_decode(struct dvel_cabac *cabac, int log2_trafo_size,
 
 	if (prefix_y > 3) {
 		int suffix_len = (prefix_y >> 1) - 1;
-		for (int i = 0; i < suffix_len; i++)
+		int i;
+		for (i = 0; i < suffix_len; i++)
 			suffix_y = (suffix_y << 1) | cabac_decode_bypass(cabac);
 		*last_y = ((2 + (prefix_y & 1)) << (suffix_len)) + suffix_y;
 	} else {
@@ -892,8 +943,6 @@ static void residual_coding(struct dvel_ctx *ctx,
 	int num_last_subset;
 	int qp, scale, shift, add;
 	int i;
-
-	(void)c_idx;
 
 	memset(coeffs, 0, trafo_size * trafo_size * sizeof(int16_t));
 
@@ -1042,7 +1091,7 @@ static void residual_coding(struct dvel_ctx *ctx,
 			int c_rice = 0;
 			int first_g1_idx = -1;
 			u8 g1_flag[8] = {0};
-			u16 sign_flag;
+			u8 signs[16] = {0};
 			int sign_hidden;
 			int first_nz_pos;
 			int last_nz_pos;
@@ -1076,11 +1125,10 @@ static void residual_coding(struct dvel_ctx *ctx,
 			}
 
 			/* Decode sign bits */
-			sign_flag = 0;
 			{
 				int nb_sign = sign_hidden ? (n_end - 1) : n_end;
 				for (m = 0; m < nb_sign; m++)
-					sign_flag = (sign_flag << 1) | coeff_sign_flag_decode(cabac);
+					signs[m] = coeff_sign_flag_decode(cabac);
 			}
 
 			/* Decode abs_level_remaining and fill coeffs */
@@ -1110,12 +1158,14 @@ static void residual_coding(struct dvel_ctx *ctx,
 					/* Sign bit */
 					if (sign_hidden) {
 						sum_abs += level;
-						if (m == first_nz_pos && (sum_abs & 1))
+						if (m < n_end - 1 && signs[m])
+							level = -level;
+						else if (m == n_end - 1 && (sum_abs & 1))
+							level = -level;
+					} else {
+						if (signs[m])
 							level = -level;
 					}
-					if (sign_flag >> 15)
-						level = -level;
-					sign_flag <<= 1;
 
 					coeffs[y_c * trafo_size + x_c] = (s16)level;
 				}
@@ -1124,7 +1174,24 @@ static void residual_coding(struct dvel_ctx *ctx,
 	}
 
 	/* --- Dequantize --- */
-	qp = ctx->qp_y + ctx->sps.bit_depth - 8;
+	if (c_idx == 0) {
+		qp = ctx->qp_y;
+	} else if (c_idx == 1) {
+		qp = ctx->qp_y + ctx->pps.cb_qp_offset;
+		if (qp < 0)
+			qp = 0;
+		else if (qp > 51)
+			qp = 51;
+		qp = dvel_chroma_qp(qp, 0);
+	} else {
+		qp = ctx->qp_y + ctx->pps.cr_qp_offset;
+		if (qp < 0)
+			qp = 0;
+		else if (qp > 51)
+			qp = 51;
+		qp = dvel_chroma_qp(qp, 1);
+	}
+	qp += ctx->sps.bit_depth - 8;
 	shift = ctx->sps.bit_depth + log2_trafo_size - 5;
 	add = 1 << (shift - 1);
 	scale = level_scale[rem6[qp]] << div6[qp];
@@ -1165,9 +1232,9 @@ static int cbf_luma_decode(struct dvel_cabac *c)
 	return cabac_decode_bin(c, 114);
 }
 
-static int cbf_cb_cr_decode(struct dvel_cabac *c, int idx)
+static int cbf_cb_cr_decode(struct dvel_cabac *c, int idx, int trafo_depth)
 {
-	return cabac_decode_bin(c, 115 + idx);
+	return cabac_decode_bin(c, 115 + idx + (trafo_depth > 0 ? 1 : 0));
 }
 
 /* Add decoded residual coeffs to the output picture buffer.
@@ -1237,13 +1304,20 @@ static void add_residual_to_pic(struct dvel_pic *pic, s16 *coeffs,
 static int decode_tu_leaf(struct dvel_ctx *ctx, int x0, int y0,
 			  int log2_trafo_size, int depth)
 {
-	int cbf_luma = 1;
+	int cbf_luma;
 	int chroma_log2 = log2_trafo_size -
 			   ((ctx->sps.chroma_format_idc == DVEL_CHROMA_420) ? 1 : 0);
 	int cbf_cb = 0, cbf_cr = 0;
 	s16 coeffs[1024]; /* 32x32 max */
 
-	if (depth == 0)
+	if (ctx->sps.chroma_format_idc != DVEL_CHROMA_MONO) {
+		cbf_cb = cbf_cb_cr_decode(&ctx->cabac, 0, depth);
+		cbf_cr = cbf_cb_cr_decode(&ctx->cabac, 1, depth);
+	}
+
+	if (depth == 0 || cbf_cb || cbf_cr)
+		cbf_luma = 1;
+	else
 		cbf_luma = cbf_luma_decode(&ctx->cabac);
 
 	if (cbf_luma) {
@@ -1251,11 +1325,6 @@ static int decode_tu_leaf(struct dvel_ctx *ctx, int x0, int y0,
 		dvel_idct(coeffs, log2_trafo_size);
 		add_residual_to_pic(ctx->pic, coeffs, x0, y0,
 				    log2_trafo_size, 0);
-	}
-
-	if (ctx->sps.chroma_format_idc != DVEL_CHROMA_MONO) {
-		cbf_cb = cbf_cb_cr_decode(&ctx->cabac, 0);
-		cbf_cr = cbf_cb_cr_decode(&ctx->cabac, 1);
 	}
 
 	if (cbf_cb) {
@@ -1689,6 +1758,15 @@ int dvel_decode(struct dvel_ctx *ctx, const u8 *data, int size, int poc)
 			   rbsp_size - cabac_offset_bytes,
 			   init_type,
 			   ctx->slice_qp);
+
+		/* Clear residual buffers before decoding */
+		memset(ctx->pic->y, 0, ctx->pic->stride * ctx->height * 2);
+		if (ctx->sps.chroma_format_idc != DVEL_CHROMA_MONO) {
+			int c_stride = ctx->pic->stride >> 1;
+			int c_height = (ALIGN(ctx->height, 2)) >> 1;
+			memset(ctx->pic->u, 0, c_stride * c_height * 2);
+			memset(ctx->pic->v, 0, c_stride * c_height * 2);
+		}
 
 		/* Decode all CTUs in the frame */
 		ret = decode_ctus(ctx);
