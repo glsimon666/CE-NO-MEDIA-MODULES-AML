@@ -11240,7 +11240,7 @@ static int vh265_event_cb(int type, void *data, void *op_arg)
 			else
 				req->dv_enhance_exist =
 					hevc->m_PIC[index]->dv_enhance_exist;
-			if (vdec_frame_based(vdec) && (hevc->dv_duallayer == true))
+			if (hevc->dvel_active || (vdec_frame_based(vdec) && hevc->dv_duallayer == true))
 				req->dv_enhance_exist = 1;
 			hevc_print(hevc, H265_DEBUG_DV,
 			"query dv_enhance_exist for (pic 0x%p, vf 0x%p, poc %d index %d) flag => %d, aux sizd 0x%x\n",

@@ -10641,7 +10641,7 @@ static int vh265_event_cb(int type, void *data, void *op_arg)
 			else
 				req->dv_enhance_exist =
 					hevc->m_PIC[index]->dv_enhance_exist;
-			if (vdec_frame_based(vdec) && (hevc->dv_duallayer == true))
+			if (hevc->dvel_active || (vdec_frame_based(vdec) && hevc->dv_duallayer == true))
 				req->dv_enhance_exist = 1;
 			/* stream-based DUALDEC: slave(dveldec) EL decoder always reports enhancement exist */
 			else if (!vdec_frame_based(vdec) && vdec_dual(vdec) && hevc->dolby_enhance_flag)
