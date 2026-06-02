@@ -13360,8 +13360,6 @@ muti_output:
 					int data_sz = (int)min(hevc->data_size,
 						(u32)(hevc->chunk->block->size
 							- hevc->data_offset));
-					pr_info("dvel: scanning %d bytes for DVEL NAL poc %d\n",
-						data_sz, hevc->curr_POC);
 					void *vaddr = NULL;
 					bool need_unmap = false;
 					if (data_sz > 4) {
@@ -13375,8 +13373,14 @@ muti_output:
 							need_unmap = true;
 						}
 					}
+					pr_info("dvel: scanning %d bytes offset %d poc %d consumed %x vaddr=%px\n",
+						data_sz, hevc->data_offset, hevc->curr_POC,
+						READ_VREG(HEVC_SHIFT_BYTE_COUNT), vaddr);
 					if (vaddr) {
 						u8 *buf = (u8 *)vaddr;
+						pr_info("dvel: head %02x%02x%02x%02x %02x%02x%02x%02x\n",
+							buf[0], buf[1], buf[2], buf[3],
+							buf[4], buf[5], buf[6], buf[7]);
 						int i;
 						for (i = 0; i < data_sz - 4; i++) {
 							if (buf[i] == 0 && buf[i+1] == 0 &&
