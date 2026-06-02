@@ -13378,12 +13378,12 @@ muti_output:
 						READ_VREG(HEVC_SHIFT_BYTE_COUNT), vaddr);
 					if (vaddr) {
 						u8 *buf = (u8 *)vaddr;
-						int i, first_start = -1;
-						for (i = 0; i < data_sz - 4; i++) {
+						int i;
+						int found_dvel = 0;
+						for (i = 0; i < data_sz - 4 && !found_dvel; i++) {
 							if (buf[i] == 0 && buf[i+1] == 0 &&
 								buf[i+2] == 1) {
-								if (first_start < 0) {
-									first_start = i;
+								if (i == 0)
 									pr_info("dvel: poc %d sz=%d first_nal=0x%02x@%d next32: %02x%02x%02x%02x%02x%02x%02x%02x %02x%02x%02x%02x%02x%02x%02x%02x %02x%02x%02x%02x%02x%02x%02x%02x %02x%02x%02x%02x%02x%02x%02x%02x\n",
 										hevc->curr_POC, data_sz, buf[i+3], i,
 										buf[i+4], buf[i+5], buf[i+6], buf[i+7],
@@ -13393,41 +13393,37 @@ muti_output:
 										buf[i+20], buf[i+21], buf[i+22], buf[i+23],
 										buf[i+24], buf[i+25], buf[i+26], buf[i+27],
 										buf[i+28], buf[i+29], buf[i+30], buf[i+31]);
-								}
-								break;
-							}
-						}
-						if (buf[i] == 0 && buf[i+1] == 0 &&
-							buf[i+2] == 1 && buf[i+3] == 0xA0) {
-								int nal_end = data_sz;
-								int j;
-								for (j = i + 4; j < data_sz - 3; j++) {
-									if (buf[j] == 0 && buf[j+1] == 0 &&
-										buf[j+2] == 1) {
-										nal_end = j;
-										break;
+								if (buf[i+3] == 0xA0) {
+									int nal_end = data_sz;
+									int j;
+									for (j = i + 4; j < data_sz - 3; j++) {
+										if (buf[j] == 0 && buf[j+1] == 0 &&
+											buf[j+2] == 1) {
+											nal_end = j;
+											break;
+										}
 									}
+									if (hevc->frame_width && hevc->frame_height) {
+										int bd = hevc->bit_depth_luma ? : 8;
+										int ret;
+										ret = dvel_global_init(hevc->frame_width,
+											hevc->frame_height, bd);
+										if (ret < 0)
+											hevc_print(hevc, 0,
+												"dvel: init error %d\n", ret);
+										ret = dvel_global_decode(buf + i,
+											nal_end - i, hevc->curr_POC);
+										if (ret < 0)
+											hevc_print(hevc, 0,
+												"dvel: decode error %d poc %d\n",
+												ret, hevc->curr_POC);
+										else
+											hevc_print(hevc, H265_DEBUG_DV,
+												"dvel: decoded EL nal poc %d size %d\n",
+												hevc->curr_POC, nal_end - i);
+									}
+									found_dvel = 1;
 								}
-								if (hevc->frame_width && hevc->frame_height) {
-									int bd = hevc->bit_depth_luma ? : 8;
-									int ret;
-									ret = dvel_global_init(hevc->frame_width,
-										hevc->frame_height, bd);
-									if (ret < 0)
-										hevc_print(hevc, 0,
-											"dvel: init error %d\n", ret);
-									ret = dvel_global_decode(buf + i,
-										nal_end - i, hevc->curr_POC);
-									if (ret < 0)
-										hevc_print(hevc, 0,
-											"dvel: decode error %d poc %d\n",
-											ret, hevc->curr_POC);
-									else
-										hevc_print(hevc, H265_DEBUG_DV,
-											"dvel: decoded EL nal poc %d size %d\n",
-											hevc->curr_POC, nal_end - i);
-								}
-								break;
 							}
 						}
 						if (need_unmap)
