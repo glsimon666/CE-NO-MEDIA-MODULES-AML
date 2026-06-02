@@ -871,58 +871,6 @@ static const u16 dv_hevc_reg_offsets[] = {
 };
 #undef X
 #define DV_HEVC_NUM_REGS  ARRAY_SIZE(dv_hevc_reg_offsets)
-
-static int dv_init_ctx(struct hevc_state_s *hevc)
-{
-	int i;
-	for (i = 0; i < 2; i++) {
-		hevc->dv_ctx_save[i] = kmalloc_array(DV_HEVC_NUM_REGS,
-						     sizeof(u32), GFP_KERNEL);
-		if (!hevc->dv_ctx_save[i]) {
-			while (--i >= 0)
-				kfree(hevc->dv_ctx_save[i]);
-			return -ENOMEM;
-		}
-		memset(hevc->dv_ctx_save[i], 0, DV_HEVC_NUM_REGS * sizeof(u32));
-	}
-	hevc->dv_ctx_save_entries = DV_HEVC_NUM_REGS;
-	hevc->dv_ctx_current_layer = 0;
-	hevc->dv_ctx_next_layer = 0;
-	hevc->dv_ctx_valid[0] = 0;
-	hevc->dv_ctx_valid[1] = 0;
-	return 0;
-}
-
-static void dv_exit_ctx(struct hevc_state_s *hevc)
-{
-	int i;
-	for (i = 0; i < 2; i++) {
-		kfree(hevc->dv_ctx_save[i]);
-		hevc->dv_ctx_save[i] = NULL;
-	}
-	hevc->dv_ctx_save_entries = 0;
-}
-
-static void dv_save_context(struct hevc_state_s *hevc, int layer)
-{
-	int i;
-	uint32_t *buf = hevc->dv_ctx_save[layer];
-	if (!buf)
-		return;
-	for (i = 0; i < hevc->dv_ctx_save_entries; i++)
-		buf[i] = READ_VREG(dv_hevc_reg_offsets[i]);
-	hevc->dv_ctx_valid[layer] = 1;
-}
-
-static void dv_restore_context(struct hevc_state_s *hevc, int layer)
-{
-	int i;
-	uint32_t *buf = hevc->dv_ctx_save[layer];
-	if (!buf || !hevc->dv_ctx_valid[layer])
-		return;
-	for (i = 0; i < hevc->dv_ctx_save_entries; i++)
-		WRITE_VREG(dv_hevc_reg_offsets[i], buf[i]);
-}
 #endif
 
 static u32 mmu_enable = 1;
@@ -2659,6 +2607,60 @@ struct hevc_state_s {
 	u32 data_offset_bak;
 	enum FenceModeBufStatus fence_mode_buf_status;
 } /*hevc_stru_t */;
+
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
+static int dv_init_ctx(struct hevc_state_s *hevc)
+{
+	int i;
+	for (i = 0; i < 2; i++) {
+		hevc->dv_ctx_save[i] = kmalloc_array(DV_HEVC_NUM_REGS,
+						     sizeof(u32), GFP_KERNEL);
+		if (!hevc->dv_ctx_save[i]) {
+			while (--i >= 0)
+				kfree(hevc->dv_ctx_save[i]);
+			return -ENOMEM;
+		}
+		memset(hevc->dv_ctx_save[i], 0, DV_HEVC_NUM_REGS * sizeof(u32));
+	}
+	hevc->dv_ctx_save_entries = DV_HEVC_NUM_REGS;
+	hevc->dv_ctx_current_layer = 0;
+	hevc->dv_ctx_next_layer = 0;
+	hevc->dv_ctx_valid[0] = 0;
+	hevc->dv_ctx_valid[1] = 0;
+	return 0;
+}
+
+static void dv_exit_ctx(struct hevc_state_s *hevc)
+{
+	int i;
+	for (i = 0; i < 2; i++) {
+		kfree(hevc->dv_ctx_save[i]);
+		hevc->dv_ctx_save[i] = NULL;
+	}
+	hevc->dv_ctx_save_entries = 0;
+}
+
+static void dv_save_context(struct hevc_state_s *hevc, int layer)
+{
+	int i;
+	uint32_t *buf = hevc->dv_ctx_save[layer];
+	if (!buf)
+		return;
+	for (i = 0; i < hevc->dv_ctx_save_entries; i++)
+		buf[i] = READ_VREG(dv_hevc_reg_offsets[i]);
+	hevc->dv_ctx_valid[layer] = 1;
+}
+
+static void dv_restore_context(struct hevc_state_s *hevc, int layer)
+{
+	int i;
+	uint32_t *buf = hevc->dv_ctx_save[layer];
+	if (!buf || !hevc->dv_ctx_valid[layer])
+		return;
+	for (i = 0; i < hevc->dv_ctx_save_entries; i++)
+		WRITE_VREG(dv_hevc_reg_offsets[i], buf[i]);
+}
+#endif
 
 struct hevc_RPS_s {
 	int num_neg;

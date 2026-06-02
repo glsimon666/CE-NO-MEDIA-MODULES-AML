@@ -7,6 +7,7 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/spinlock.h>
@@ -1736,41 +1737,61 @@ static const s8 dvel_transform[32][32] = {
 static void dvel_idct_4x4(s16 *coeffs)
 {
 	int i;
+	s16 *p;
 
-	for (i = 0; i < 4; i++)
-		DVEL_TR_4(coeffs + i, coeffs + i, 4, 4, 7, 32);
-	for (i = 0; i < 4; i++)
-		DVEL_TR_4(coeffs + i * 4, coeffs + i * 4, 1, 1, 12, 2048);
+	for (i = 0; i < 4; i++) {
+		p = coeffs + i;
+		DVEL_TR_4(p, p, 4, 4, 7, 32);
+	}
+	for (i = 0; i < 4; i++) {
+		p = coeffs + i * 4;
+		DVEL_TR_4(p, p, 1, 1, 12, 2048);
+	}
 }
 
 static void dvel_idct_8x8(s16 *coeffs)
 {
 	int i;
+	s16 *p;
 
-	for (i = 0; i < 8; i++)
-		DVEL_TR_8(coeffs + i, coeffs + i, 8, 8, 7, 64, 8);
-	for (i = 0; i < 8; i++)
-		DVEL_TR_8(coeffs + i * 8, coeffs + i * 8, 1, 1, 12, 2048, 8);
+	for (i = 0; i < 8; i++) {
+		p = coeffs + i;
+		DVEL_TR_8(p, p, 8, 8, 7, 64, 8);
+	}
+	for (i = 0; i < 8; i++) {
+		p = coeffs + i * 8;
+		DVEL_TR_8(p, p, 1, 1, 12, 2048, 8);
+	}
 }
 
 static void dvel_idct_16x16(s16 *coeffs)
 {
 	int i;
+	s16 *p;
 
-	for (i = 0; i < 16; i++)
-		DVEL_TR_16(coeffs + i, coeffs + i, 16, 16, 7, 64, 16);
-	for (i = 0; i < 16; i++)
-		DVEL_TR_16(coeffs + i * 16, coeffs + i * 16, 1, 1, 12, 2048, 16);
+	for (i = 0; i < 16; i++) {
+		p = coeffs + i;
+		DVEL_TR_16(p, p, 16, 16, 7, 64, 16);
+	}
+	for (i = 0; i < 16; i++) {
+		p = coeffs + i * 16;
+		DVEL_TR_16(p, p, 1, 1, 12, 2048, 16);
+	}
 }
 
 static void dvel_idct_32x32(s16 *coeffs)
 {
 	int i;
+	s16 *p;
 
-	for (i = 0; i < 32; i++)
-		DVEL_TR_32(coeffs + i, coeffs + i, 32, 32, 7, 64, 32);
-	for (i = 0; i < 32; i++)
-		DVEL_TR_32(coeffs + i * 32, coeffs + i * 32, 1, 1, 12, 2048, 32);
+	for (i = 0; i < 32; i++) {
+		p = coeffs + i;
+		DVEL_TR_32(p, p, 32, 32, 7, 64, 32);
+	}
+	for (i = 0; i < 32; i++) {
+		p = coeffs + i * 32;
+		DVEL_TR_32(p, p, 1, 1, 12, 2048, 32);
+	}
 }
 
 static void dvel_idct(s16 *coeffs, int log2_trafo_size)
@@ -2298,3 +2319,6 @@ void dvel_global_exit(void)
 	dvel_provider_exit();
 }
 EXPORT_SYMBOL(dvel_global_exit);
+
+MODULE_DESCRIPTION("AMLOGIC dvel Video Decoder Driver");
+MODULE_LICENSE("GPL");

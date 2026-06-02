@@ -4982,7 +4982,7 @@ static void config_sao_hw_fb(struct VP9Decoder_s *pbi)
 		//WRITE_VREG(HEVC_SAO_CTRL5, data32);
 		READ_WRITE_DATA16(pbi, HEVC_SAO_CTRL5, 0, 16, 8);
 	} else {
-		uint32_t data;
+		uint32_t data = 0;
 		if (get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_T7)
 			WRITE_BACK_8(pbi, HEVC_SAO_CTRL26, 0);
 
