@@ -13378,28 +13378,27 @@ muti_output:
 						READ_VREG(HEVC_SHIFT_BYTE_COUNT), vaddr);
 					if (vaddr) {
 						u8 *buf = (u8 *)vaddr;
-						int i, first_start = -1, last_start = -1;
-						u8 first_nal = 0, last_nal = 0;
-						int start_count = 0;
-						int nal_pos[20];
-						u8 nal_type[20];
+						int i, first_start = -1;
 						for (i = 0; i < data_sz - 4; i++) {
 							if (buf[i] == 0 && buf[i+1] == 0 &&
 								buf[i+2] == 1) {
 								if (first_start < 0) {
 									first_start = i;
-									first_nal = buf[i+3];
+									pr_info("dvel: poc %d sz=%d first_nal=0x%02x@%d next32: %02x%02x%02x%02x%02x%02x%02x%02x %02x%02x%02x%02x%02x%02x%02x%02x %02x%02x%02x%02x%02x%02x%02x%02x %02x%02x%02x%02x%02x%02x%02x%02x\n",
+										hevc->curr_POC, data_sz, buf[i+3], i,
+										buf[i+4], buf[i+5], buf[i+6], buf[i+7],
+										buf[i+8], buf[i+9], buf[i+10], buf[i+11],
+										buf[i+12], buf[i+13], buf[i+14], buf[i+15],
+										buf[i+16], buf[i+17], buf[i+18], buf[i+19],
+										buf[i+20], buf[i+21], buf[i+22], buf[i+23],
+										buf[i+24], buf[i+25], buf[i+26], buf[i+27],
+										buf[i+28], buf[i+29], buf[i+30], buf[i+31]);
 								}
-								last_start = i;
-								last_nal = buf[i+3];
-								if (start_count < 20) {
-									nal_pos[start_count] = i;
-									nal_type[start_count] = buf[i+3];
-								}
-								start_count++;
+								break;
 							}
-							if (buf[i] == 0 && buf[i+1] == 0 &&
-								buf[i+2] == 1 && buf[i+3] == 0xA0) {
+						}
+						if (buf[i] == 0 && buf[i+1] == 0 &&
+							buf[i+2] == 1 && buf[i+3] == 0xA0) {
 								int nal_end = data_sz;
 								int j;
 								for (j = i + 4; j < data_sz - 3; j++) {
@@ -13430,15 +13429,6 @@ muti_output:
 								}
 								break;
 							}
-						}
-						if (hevc->curr_POC % 30 == 0 && start_count > 0) {
-							int n = start_count > 16 ? 16 : start_count;
-							int k;
-							pr_info("dvel: poc %d sz=%d starts=%d types=",
-								hevc->curr_POC, data_sz, start_count);
-							for (k = 0; k < n && k < 16; k++)
-								pr_cont(" %02x", nal_type[k]);
-							pr_cont("\n");
 						}
 						if (need_unmap)
 							codec_mm_unmap_phyaddr(vaddr);
