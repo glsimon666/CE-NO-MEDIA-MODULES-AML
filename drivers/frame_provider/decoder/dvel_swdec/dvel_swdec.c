@@ -1835,7 +1835,7 @@ int dvel_init(struct dvel_ctx *ctx, int width, int height, int bit_depth)
 	ctx->pic->stride = ALIGN(width, 64);
 	ctx->pic->bit_depth = bit_depth;
 
-	ctx->pic->y = kzalloc(ctx->pic->stride * height * 2, GFP_KERNEL);
+	ctx->pic->y = kvzalloc(ctx->pic->stride * height * 2, GFP_KERNEL);
 	if (!ctx->pic->y) {
 		kfree(ctx->pic);
 		ctx->pic = NULL;
@@ -1846,11 +1846,11 @@ int dvel_init(struct dvel_ctx *ctx, int width, int height, int bit_depth)
 	{
 		int c_stride = ctx->pic->stride >> 1;
 		int c_height = ALIGN(height, 2) >> 1;
-		ctx->pic->u = kzalloc(c_stride * c_height * 2, GFP_KERNEL);
-		ctx->pic->v = kzalloc(c_stride * c_height * 2, GFP_KERNEL);
+		ctx->pic->u = kvzalloc(c_stride * c_height * 2, GFP_KERNEL);
+		ctx->pic->v = kvzalloc(c_stride * c_height * 2, GFP_KERNEL);
 		if (!ctx->pic->u || !ctx->pic->v) {
-			kfree(ctx->pic->u);
-			kfree(ctx->pic->y);
+			kvfree(ctx->pic->u);
+			kvfree(ctx->pic->y);
 			kfree(ctx->pic);
 			ctx->pic = NULL;
 			return -ENOMEM;
@@ -1865,9 +1865,9 @@ int dvel_init(struct dvel_ctx *ctx, int width, int height, int bit_depth)
 void dvel_exit(struct dvel_ctx *ctx)
 {
 	if (ctx->pic) {
-		kfree(ctx->pic->y);
-		kfree(ctx->pic->u);
-		kfree(ctx->pic->v);
+		kvfree(ctx->pic->y);
+		kvfree(ctx->pic->u);
+		kvfree(ctx->pic->v);
 		kfree(ctx->pic);
 		ctx->pic = NULL;
 	}
@@ -2101,9 +2101,9 @@ static void dvel_provider_exit(void)
 	if (g_pool) {
 		vf_unreg_provider(&g_dvel_prov);
 		for (i = 0; i < DVEL_FRAME_POOL_SIZE; i++) {
-			kfree(g_pool->pic[i].y);
-			kfree(g_pool->pic[i].u);
-			kfree(g_pool->pic[i].v);
+			kvfree(g_pool->pic[i].y);
+			kvfree(g_pool->pic[i].u);
+			kvfree(g_pool->pic[i].v);
 		}
 		kfree(g_pool);
 		g_pool = NULL;
@@ -2118,12 +2118,12 @@ static int dvel_pool_pic_alloc(struct dvel_pic *pic, int width, int height,
 	int c_stride = stride >> 1;
 	int c_height = ALIGN(height, 2) >> 1;
 
-	pic->y = kzalloc(stride * height * 2, GFP_KERNEL);
+	pic->y = kvzalloc(stride * height * 2, GFP_KERNEL);
 	if (!pic->y)
 		return -ENOMEM;
 
-	pic->u = kzalloc(c_stride * c_height * 2, GFP_KERNEL);
-	pic->v = kzalloc(c_stride * c_height * 2, GFP_KERNEL);
+	pic->u = kvzalloc(c_stride * c_height * 2, GFP_KERNEL);
+	pic->v = kvzalloc(c_stride * c_height * 2, GFP_KERNEL);
 	if (!pic->v)
 		goto fail;
 
@@ -2134,8 +2134,8 @@ static int dvel_pool_pic_alloc(struct dvel_pic *pic, int width, int height,
 	return 0;
 
 fail:
-	kfree(pic->y);
-	kfree(pic->u);
+	kvfree(pic->y);
+	kvfree(pic->u);
 	pic->y = NULL;
 	pic->u = NULL;
 	return -ENOMEM;
