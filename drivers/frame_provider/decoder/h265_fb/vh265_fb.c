@@ -13381,6 +13381,8 @@ muti_output:
 						int i, first_start = -1, last_start = -1;
 						u8 first_nal = 0, last_nal = 0;
 						int start_count = 0;
+						int nal_pos[20];
+						u8 nal_type[20];
 						for (i = 0; i < data_sz - 4; i++) {
 							if (buf[i] == 0 && buf[i+1] == 0 &&
 								buf[i+2] == 1) {
@@ -13390,6 +13392,10 @@ muti_output:
 								}
 								last_start = i;
 								last_nal = buf[i+3];
+								if (start_count < 20) {
+									nal_pos[start_count] = i;
+									nal_type[start_count] = buf[i+3];
+								}
 								start_count++;
 							}
 							if (buf[i] == 0 && buf[i+1] == 0 &&
@@ -13425,8 +13431,15 @@ muti_output:
 								break;
 							}
 						}
-						pr_info("dvel: starts=%d first=0x%02x@%d last=0x%02x@%d\n",
-							start_count, first_nal, first_start, last_nal, last_start);
+						if (hevc->curr_POC % 30 == 0 && start_count > 0) {
+							int n = start_count > 16 ? 16 : start_count;
+							int k;
+							pr_info("dvel: poc %d sz=%d starts=%d types=",
+								hevc->curr_POC, data_sz, start_count);
+							for (k = 0; k < n && k < 16; k++)
+								pr_cont(" %02x", nal_type[k]);
+							pr_cont("\n");
+						}
 						if (need_unmap)
 							codec_mm_unmap_phyaddr(vaddr);
 					}
