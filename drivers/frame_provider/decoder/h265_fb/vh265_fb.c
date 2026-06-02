@@ -13353,6 +13353,68 @@ muti_output:
 				hevc->consume_byte = READ_VREG(HEVC_SHIFT_BYTE_COUNT) - 8;
 				hevc->dec_result = DEC_RESULT_UNFINISH;
 			} else {
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
+				if (hevc->dvel_active &&
+					get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_S5 &&
+					hevc->chunk && hevc->chunk->block) {
+					int data_sz = (int)min(hevc->data_size,
+						(u32)(hevc->chunk->block->size
+							- hevc->data_offset));
+					void *vaddr = NULL;
+					bool need_unmap = false;
+					if (data_sz > 4) {
+						if (hevc->chunk->block->is_mapped)
+							vaddr = (u8 *)hevc->chunk->block->start_virt
+								+ hevc->data_offset;
+						else {
+							vaddr = codec_mm_vmap(
+								hevc->chunk->block->start
+								+ hevc->data_offset, data_sz);
+							need_unmap = true;
+						}
+					}
+					if (vaddr) {
+						u8 *buf = (u8 *)vaddr;
+						int i;
+						for (i = 0; i < data_sz - 4; i++) {
+							if (buf[i] == 0 && buf[i+1] == 0 &&
+								buf[i+2] == 1 && buf[i+3] == 0xA0) {
+								int nal_end = data_sz;
+								int j;
+								for (j = i + 4; j < data_sz - 3; j++) {
+									if (buf[j] == 0 && buf[j+1] == 0 &&
+										buf[j+2] == 1) {
+										nal_end = j;
+										break;
+									}
+								}
+								if (hevc->frame_width && hevc->frame_height) {
+									int bd = hevc->bit_depth_luma ? : 8;
+									int ret;
+									ret = dvel_global_init(hevc->frame_width,
+										hevc->frame_height, bd);
+									if (ret < 0)
+										hevc_print(hevc, 0,
+											"dvel: init error %d\n", ret);
+									ret = dvel_global_decode(buf + i,
+										nal_end - i, hevc->curr_POC);
+									if (ret < 0)
+										hevc_print(hevc, 0,
+											"dvel: decode error %d poc %d\n",
+											ret, hevc->curr_POC);
+									else
+										hevc_print(hevc, H265_DEBUG_DV,
+											"dvel: decoded EL nal poc %d size %d\n",
+											hevc->curr_POC, nal_end - i);
+								}
+								break;
+							}
+						}
+						if (need_unmap)
+							codec_mm_unmap_phyaddr(vaddr);
+					}
+				}
+#endif
 				hevc->data_size = 0;
 				hevc->data_offset = 0;
 				hevc->dec_result = DEC_RESULT_DONE;
