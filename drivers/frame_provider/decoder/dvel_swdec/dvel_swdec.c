@@ -2205,6 +2205,7 @@ int dvel_global_init(int width, int height, int bit_depth)
 {
 	unsigned long flags;
 	int ret;
+	struct dvel_ctx *new_ctx = NULL;
 
 	spin_lock_irqsave(&dvel_lock, flags);
 	if (g_dvel_ctx) {
@@ -2226,24 +2227,22 @@ int dvel_global_init(int width, int height, int bit_depth)
 		spin_unlock_irqrestore(&dvel_lock, flags);
 		return ret;
 	}
+	spin_unlock_irqrestore(&dvel_lock, flags);
 
-	g_dvel_ctx = kzalloc(sizeof(struct dvel_ctx), GFP_KERNEL);
-	if (!g_dvel_ctx) {
+	new_ctx = kzalloc(sizeof(struct dvel_ctx), GFP_KERNEL);
+	if (!new_ctx) {
 		dvel_provider_exit();
-		spin_unlock_irqrestore(&dvel_lock, flags);
 		return -ENOMEM;
 	}
 
-	ret = dvel_init(g_dvel_ctx, width, height, bit_depth);
+	ret = dvel_init(new_ctx, width, height, bit_depth);
 	if (ret < 0) {
-		kfree(g_dvel_ctx);
-		g_dvel_ctx = NULL;
+		kfree(new_ctx);
 		dvel_provider_exit();
-		spin_unlock_irqrestore(&dvel_lock, flags);
 		return ret;
 	}
 
-	/* Pre-allocate all pool picture buffers (process context or ISR-safe GFP_ATOMIC).
+	/* Pre-allocate all pool picture buffers.
 	 * This ensures dvel_frame_ready() never needs to allocate memory in the ISR.
 	 */
 	if (g_pool) {
@@ -2258,6 +2257,10 @@ int dvel_global_init(int width, int height, int bit_depth)
 		}
 	}
 
+	spin_lock_irqsave(&dvel_lock, flags);
+	if (g_dvel_ctx)
+		dvel_exit(g_dvel_ctx);
+	g_dvel_ctx = new_ctx;
 	spin_unlock_irqrestore(&dvel_lock, flags);
 	return 0;
 }
