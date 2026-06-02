@@ -15597,7 +15597,15 @@ static s32 vh265_init(struct hevc_state_s *hevc)
 	}
 
 	hevc->stat |= STAT_ISR_REG;
-	hevc->provider_name = PROVIDER_NAME;
+	/*
+	 * Keep provider name from probe if already set (e.g. DV path).
+	 * Otherwise fall back to PROVIDER_NAME which matches the
+	 * default VFM chain "decoder amvideo".
+	 * For m_ins_flag mode the probe's vf_provider_name should
+	 * already be correct so we skip PROVIDER_NAME override.
+	 */
+	if (hevc->provider_name == NULL || hevc->provider_name[0] == '\0')
+		hevc->provider_name = PROVIDER_NAME;
 
 #ifdef MULTI_INSTANCE_SUPPORT
 	vf_provider_init(&vh265_vf_prov, hevc->provider_name,
@@ -18959,12 +18967,22 @@ static int ammvdec_h265_probe(struct platform_device *pdev)
 			hevc_pair->shift_byte_count_lo;
 	}
 #endif
-	/* S5+slave: h265_el handles dveldec provider */
-	if (pdata->master && get_cpu_major_id() == AM_MESON_CPU_MAJOR_ID_S5)
+	/*
+	 * S5+master: h265_el handles dveldec provider,
+	 * clear provider name so no VFM provider is registered.
+	 */
+	if (pdata->master && get_cpu_major_id() == AM_MESON_CPU_MAJOR_ID_S5) {
 		pdata->vf_provider_name[0] = '\0';
-	else
+	} else if (pdata->vf_provider_name[0] == '\0') {
+		/*
+		 * Only set default multi-instance name when no
+		 * DV-specific name was configured above.
+		 * use_vfm_path and vdec_dual (DV BL/EL) paths
+		 * already set the correct name.
+		 */
 		snprintf(pdata->vf_provider_name, VDEC_PROVIDER_NAME_SIZE,
 			MULTI_INSTANCE_PROVIDER_NAME ".%02x", pdev->id & 0xff);
+	}
 
 	hevc->provider_name = pdata->vf_provider_name;
 	platform_set_drvdata(pdev, pdata);
