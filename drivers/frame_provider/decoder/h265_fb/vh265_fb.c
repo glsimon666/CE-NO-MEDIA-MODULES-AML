@@ -13380,6 +13380,12 @@ muti_output:
 						int i;
 						for (i = 0; i < data_sz - 4; i++) {
 							if (buf[i] == 0 && buf[i+1] == 0 &&
+								buf[i+2] == 1) {
+								if (buf[i+3] == 0x3E || buf[i+3] == 0x9F || buf[i+3] >= 0xA0)
+									pr_info("dvel: nal=0x%02x at offset %d/%d\n",
+										buf[i+3], i, data_sz);
+							}
+							if (buf[i] == 0 && buf[i+1] == 0 &&
 								buf[i+2] == 1 && buf[i+3] == 0xA0) {
 								int nal_end = data_sz;
 								int j;
