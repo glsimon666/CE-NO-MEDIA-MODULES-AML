@@ -13383,16 +13383,6 @@ muti_output:
 						for (i = 0; i < data_sz - 4 && !found_dvel; i++) {
 							if (buf[i] == 0 && buf[i+1] == 0 &&
 								buf[i+2] == 1) {
-								if (i == 0)
-									pr_info("dvel: poc %d sz=%d first_nal=0x%02x@%d next32: %02x%02x%02x%02x%02x%02x%02x%02x %02x%02x%02x%02x%02x%02x%02x%02x %02x%02x%02x%02x%02x%02x%02x%02x %02x%02x%02x%02x%02x%02x%02x%02x\n",
-										hevc->curr_POC, data_sz, buf[i+3], i,
-										buf[i+4], buf[i+5], buf[i+6], buf[i+7],
-										buf[i+8], buf[i+9], buf[i+10], buf[i+11],
-										buf[i+12], buf[i+13], buf[i+14], buf[i+15],
-										buf[i+16], buf[i+17], buf[i+18], buf[i+19],
-										buf[i+20], buf[i+21], buf[i+22], buf[i+23],
-										buf[i+24], buf[i+25], buf[i+26], buf[i+27],
-										buf[i+28], buf[i+29], buf[i+30], buf[i+31]);
 								if (buf[i+3] == 0xA0) {
 									int nal_end = data_sz;
 									int j;
