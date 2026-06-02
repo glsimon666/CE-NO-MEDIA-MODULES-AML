@@ -15187,8 +15187,9 @@ static void config_decode_mode(struct hevc_state_s *hevc)
 		decode_mode =
 			(hevc->start_parser_type << 8)
 			| DECODE_MODE_MULTI_DVENL;
-	if ((hevc->bypass_dvenl || hevc->bypass_dvenl_enable) &&
-		!vdec->slave && !vdec->master) {
+	if (!vdec->slave && !vdec->master &&
+		(hevc->bypass_dvenl || hevc->bypass_dvenl_enable ||
+		 get_cpu_major_id() >= AM_MESON_CPU_MAJOR_ID_S5)) {
 		hevc->bypass_dvenl = 1;
 		hevc->dvel_active = 1;
 		vdec->type = VDEC_TYPE_FRAME_BLOCK;
