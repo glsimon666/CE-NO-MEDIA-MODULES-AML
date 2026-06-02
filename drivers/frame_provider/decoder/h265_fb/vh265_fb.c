@@ -13360,6 +13360,8 @@ muti_output:
 					int data_sz = (int)min(hevc->data_size,
 						(u32)(hevc->chunk->block->size
 							- hevc->data_offset));
+					pr_info("dvel: scanning %d bytes for DVEL NAL poc %d\n",
+						data_sz, hevc->curr_POC);
 					void *vaddr = NULL;
 					bool need_unmap = false;
 					if (data_sz > 4) {
