@@ -1826,7 +1826,7 @@ int dvel_init(struct dvel_ctx *ctx, int width, int height, int bit_depth)
 	 * Called from dvel_global_init which may run in ISR context,
 	 * so use GFP_ATOMIC.
 	 */
-	ctx->pic = kzalloc(sizeof(struct dvel_pic), GFP_ATOMIC);
+	ctx->pic = kzalloc(sizeof(struct dvel_pic), GFP_KERNEL);
 	if (!ctx->pic)
 		return -ENOMEM;
 
@@ -1835,7 +1835,7 @@ int dvel_init(struct dvel_ctx *ctx, int width, int height, int bit_depth)
 	ctx->pic->stride = ALIGN(width, 64);
 	ctx->pic->bit_depth = bit_depth;
 
-	ctx->pic->y = kzalloc(ctx->pic->stride * height * 2, GFP_ATOMIC);
+	ctx->pic->y = kzalloc(ctx->pic->stride * height * 2, GFP_KERNEL);
 	if (!ctx->pic->y) {
 		kfree(ctx->pic);
 		ctx->pic = NULL;
@@ -1846,8 +1846,8 @@ int dvel_init(struct dvel_ctx *ctx, int width, int height, int bit_depth)
 	{
 		int c_stride = ctx->pic->stride >> 1;
 		int c_height = ALIGN(height, 2) >> 1;
-		ctx->pic->u = kzalloc(c_stride * c_height * 2, GFP_ATOMIC);
-		ctx->pic->v = kzalloc(c_stride * c_height * 2, GFP_ATOMIC);
+		ctx->pic->u = kzalloc(c_stride * c_height * 2, GFP_KERNEL);
+		ctx->pic->v = kzalloc(c_stride * c_height * 2, GFP_KERNEL);
 		if (!ctx->pic->u || !ctx->pic->v) {
 			kfree(ctx->pic->u);
 			kfree(ctx->pic->y);
@@ -2061,7 +2061,7 @@ static int dvel_provider_init(void)
 {
 	int i, ret;
 
-	g_pool = kzalloc(sizeof(*g_pool), GFP_ATOMIC);
+	g_pool = kzalloc(sizeof(*g_pool), GFP_KERNEL);
 	if (!g_pool)
 		return -ENOMEM;
 
@@ -2118,13 +2118,12 @@ static int dvel_pool_pic_alloc(struct dvel_pic *pic, int width, int height,
 	int c_stride = stride >> 1;
 	int c_height = ALIGN(height, 2) >> 1;
 
-	pic->y = kzalloc(stride * height * 2, GFP_ATOMIC);
+	pic->y = kzalloc(stride * height * 2, GFP_KERNEL);
 	if (!pic->y)
 		return -ENOMEM;
-	pic->u = kzalloc(c_stride * c_height * 2, GFP_ATOMIC);
-	if (!pic->u)
-		goto fail;
-	pic->v = kzalloc(c_stride * c_height * 2, GFP_ATOMIC);
+
+	pic->u = kzalloc(c_stride * c_height * 2, GFP_KERNEL);
+	pic->v = kzalloc(c_stride * c_height * 2, GFP_KERNEL);
 	if (!pic->v)
 		goto fail;
 
@@ -2228,7 +2227,7 @@ int dvel_global_init(int width, int height, int bit_depth)
 		return ret;
 	}
 
-	g_dvel_ctx = kzalloc(sizeof(struct dvel_ctx), GFP_ATOMIC);
+	g_dvel_ctx = kzalloc(sizeof(struct dvel_ctx), GFP_KERNEL);
 	if (!g_dvel_ctx) {
 		dvel_provider_exit();
 		spin_unlock_irqrestore(&dvel_lock, flags);
