@@ -13383,6 +13383,12 @@ muti_output:
 						for (i = 0; i < data_sz - 4 && !found_dvel; i++) {
 							if (buf[i] == 0 && buf[i+1] == 0 &&
 								buf[i+2] == 1) {
+								if (buf[i+3] == 0x7E && i + 16 < data_sz) {
+									u32 sz = (buf[i+4]<<24)|(buf[i+5]<<16)|(buf[i+6]<<8)|buf[i+7];
+									u8 nal = buf[i+16];
+									if (hevc->curr_POC % 60 == 0)
+										pr_info("dvel: 0x7e@%d sz=%u inner_nal=0x%02x\n", i, sz, nal);
+								}
 								if (buf[i+3] == 0xA0) {
 									int nal_end = data_sz;
 									int j;
