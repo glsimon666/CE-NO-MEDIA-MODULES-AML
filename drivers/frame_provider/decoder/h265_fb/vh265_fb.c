@@ -13378,16 +13378,19 @@ muti_output:
 						READ_VREG(HEVC_SHIFT_BYTE_COUNT), vaddr);
 					if (vaddr) {
 						u8 *buf = (u8 *)vaddr;
-						pr_info("dvel: head %02x%02x%02x%02x %02x%02x%02x%02x\n",
-							buf[0], buf[1], buf[2], buf[3],
-							buf[4], buf[5], buf[6], buf[7]);
-						int i;
+						int i, first_start = -1, last_start = -1;
+						u8 first_nal = 0, last_nal = 0;
+						int start_count = 0;
 						for (i = 0; i < data_sz - 4; i++) {
 							if (buf[i] == 0 && buf[i+1] == 0 &&
 								buf[i+2] == 1) {
-								if (buf[i+3] == 0x3E || buf[i+3] == 0x9F || buf[i+3] >= 0xA0)
-									pr_info("dvel: nal=0x%02x at offset %d/%d\n",
-										buf[i+3], i, data_sz);
+								if (first_start < 0) {
+									first_start = i;
+									first_nal = buf[i+3];
+								}
+								last_start = i;
+								last_nal = buf[i+3];
+								start_count++;
 							}
 							if (buf[i] == 0 && buf[i+1] == 0 &&
 								buf[i+2] == 1 && buf[i+3] == 0xA0) {
@@ -13422,6 +13425,8 @@ muti_output:
 								break;
 							}
 						}
+						pr_info("dvel: starts=%d first=0x%02x@%d last=0x%02x@%d\n",
+							start_count, first_nal, first_start, last_nal, last_start);
 						if (need_unmap)
 							codec_mm_unmap_phyaddr(vaddr);
 					}
