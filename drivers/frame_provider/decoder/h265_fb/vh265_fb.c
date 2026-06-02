@@ -13380,46 +13380,41 @@ muti_output:
 						u8 *buf = (u8 *)vaddr;
 						int i;
 						int found_dvel = 0;
-						for (i = 0; i < data_sz - 4 && !found_dvel; i++) {
+						for (i = 0; i < data_sz - 5 && !found_dvel; i++) {
 							if (buf[i] == 0 && buf[i+1] == 0 &&
-								buf[i+2] == 1) {
-								if (buf[i+3] == 0x7E && i + 16 < data_sz) {
-									u32 sz = (buf[i+4]<<24)|(buf[i+5]<<16)|(buf[i+6]<<8)|buf[i+7];
-									u8 nal = buf[i+16];
-									if (hevc->curr_POC % 60 == 0)
-										pr_info("dvel: 0x7e@%d sz=%u inner_nal=0x%02x\n", i, sz, nal);
-								}
-								if (buf[i+3] == 0xA0) {
-									int nal_end = data_sz;
-									int j;
-									for (j = i + 4; j < data_sz - 3; j++) {
-										if (buf[j] == 0 && buf[j+1] == 0 &&
-											buf[j+2] == 1) {
-											nal_end = j;
-											break;
-										}
+								buf[i+2] == 1 && buf[i+3] == 0x7E &&
+								buf[i+4] == 1) {
+								int nal_end = data_sz;
+								int j;
+								for (j = i + 5; j < data_sz - 3; j++) {
+									if (buf[j] == 0 && buf[j+1] == 0 &&
+										buf[j+2] == 1) {
+										nal_end = j;
+										break;
 									}
-									if (hevc->frame_width && hevc->frame_height) {
-										int bd = hevc->bit_depth_luma ? : 8;
-										int ret;
-										ret = dvel_global_init(hevc->frame_width,
-											hevc->frame_height, bd);
-										if (ret < 0)
-											hevc_print(hevc, 0,
-												"dvel: init error %d\n", ret);
-										ret = dvel_global_decode(buf + i,
-											nal_end - i, hevc->curr_POC);
-										if (ret < 0)
-											hevc_print(hevc, 0,
-												"dvel: decode error %d poc %d\n",
-												ret, hevc->curr_POC);
-										else
-											hevc_print(hevc, H265_DEBUG_DV,
-												"dvel: decoded EL nal poc %d size %d\n",
-												hevc->curr_POC, nal_end - i);
-									}
-									found_dvel = 1;
 								}
+								if (hevc->curr_POC % 60 == 0)
+									pr_info("dvel: 7e01@%d el_size=%d\n", i, nal_end - (i + 5));
+								if (hevc->frame_width && hevc->frame_height) {
+									int bd = hevc->bit_depth_luma ? : 8;
+									int ret;
+									ret = dvel_global_init(hevc->frame_width,
+										hevc->frame_height, bd);
+									if (ret < 0)
+										hevc_print(hevc, 0,
+											"dvel: init error %d\n", ret);
+									ret = dvel_global_decode(buf + i + 5,
+										nal_end - (i + 5), hevc->curr_POC);
+									if (ret < 0)
+										hevc_print(hevc, 0,
+											"dvel: decode error %d poc %d\n",
+											ret, hevc->curr_POC);
+									else
+										hevc_print(hevc, H265_DEBUG_DV,
+											"dvel: decoded EL nal poc %d size %d\n",
+											hevc->curr_POC, nal_end - (i + 5));
+								}
+								found_dvel = 1;
 							}
 						}
 						if (need_unmap)
