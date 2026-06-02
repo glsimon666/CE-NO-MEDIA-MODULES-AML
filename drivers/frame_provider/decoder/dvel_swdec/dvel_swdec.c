@@ -9,7 +9,10 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/string.h>
+#include <linux/spinlock.h>
 #include "dvel_swdec.h"
+
+static DEFINE_SPINLOCK(dvel_lock);
 
 /* ================================================================
  * Bitstream reader (simple MSB-first get_bits)
@@ -1798,8 +1801,11 @@ int dvel_init(struct dvel_ctx *ctx, int width, int height, int bit_depth)
 	ctx->sps.chroma_format_idc = DVEL_CHROMA_420;
 	ctx->sps_valid = true;
 
-	/* Allocate output frame buffer */
-	ctx->pic = kzalloc(sizeof(struct dvel_pic), GFP_KERNEL);
+	/* Allocate output frame buffer.
+	 * Called from dvel_global_init which may run in ISR context,
+	 * so use GFP_ATOMIC.
+	 */
+	ctx->pic = kzalloc(sizeof(struct dvel_pic), GFP_ATOMIC);
 	if (!ctx->pic)
 		return -ENOMEM;
 
@@ -1808,7 +1814,7 @@ int dvel_init(struct dvel_ctx *ctx, int width, int height, int bit_depth)
 	ctx->pic->stride = ALIGN(width, 64);
 	ctx->pic->bit_depth = bit_depth;
 
-	ctx->pic->y = kzalloc(ctx->pic->stride * height * 2, GFP_KERNEL);
+	ctx->pic->y = kzalloc(ctx->pic->stride * height * 2, GFP_ATOMIC);
 	if (!ctx->pic->y) {
 		kfree(ctx->pic);
 		ctx->pic = NULL;
@@ -1819,8 +1825,8 @@ int dvel_init(struct dvel_ctx *ctx, int width, int height, int bit_depth)
 	{
 		int c_stride = ctx->pic->stride >> 1;
 		int c_height = ALIGN(height, 2) >> 1;
-		ctx->pic->u = kzalloc(c_stride * c_height * 2, GFP_KERNEL);
-		ctx->pic->v = kzalloc(c_stride * c_height * 2, GFP_KERNEL);
+		ctx->pic->u = kzalloc(c_stride * c_height * 2, GFP_ATOMIC);
+		ctx->pic->v = kzalloc(c_stride * c_height * 2, GFP_ATOMIC);
 		if (!ctx->pic->u || !ctx->pic->v) {
 			kfree(ctx->pic->u);
 			kfree(ctx->pic->y);
@@ -2034,7 +2040,7 @@ static int dvel_provider_init(void)
 {
 	int i, ret;
 
-	g_pool = kzalloc(sizeof(*g_pool), GFP_KERNEL);
+	g_pool = kzalloc(sizeof(*g_pool), GFP_ATOMIC);
 	if (!g_pool)
 		return -ENOMEM;
 
@@ -2091,13 +2097,13 @@ static int dvel_pool_pic_alloc(struct dvel_pic *pic, int width, int height,
 	int c_stride = stride >> 1;
 	int c_height = ALIGN(height, 2) >> 1;
 
-	pic->y = kzalloc(stride * height * 2, GFP_KERNEL);
+	pic->y = kzalloc(stride * height * 2, GFP_ATOMIC);
 	if (!pic->y)
 		return -ENOMEM;
-	pic->u = kzalloc(c_stride * c_height * 2, GFP_KERNEL);
+	pic->u = kzalloc(c_stride * c_height * 2, GFP_ATOMIC);
 	if (!pic->u)
 		goto fail;
-	pic->v = kzalloc(c_stride * c_height * 2, GFP_KERNEL);
+	pic->v = kzalloc(c_stride * c_height * 2, GFP_ATOMIC);
 	if (!pic->v)
 		goto fail;
 
@@ -2125,8 +2131,11 @@ static int dvel_frame_ready(struct dvel_ctx *ctx)
 	if (!g_pool)
 		return -ENODEV;
 
-	if (!kfifo_get(&g_free_q, &idx))
+	if (!kfifo_get(&g_free_q, &idx)) {
+		pr_err_once("dvel: pool full, dropping EL frame poc %d\n",
+			    ctx->poc);
 		return -EAGAIN;
+	}
 
 	vf = &g_pool->vf[idx];
 	pic = &g_pool->pic[idx];
@@ -2134,10 +2143,9 @@ static int dvel_frame_ready(struct dvel_ctx *ctx)
 
 	pic->poc = ctx->poc;
 
-	/* Move decoded data from ctx->pic into pool pic.
-	 * ctx->pic->y/u/v contain the decoded residual after decode_ctus().
-	 */
+	/* Pool buffers are pre-allocated in dvel_global_init */
 	if (!pic->y) {
+		/* Fallback: should not happen after init pre-allocates */
 		if (dvel_pool_pic_alloc(pic, ctx->width, ctx->height,
 					ctx->bit_depth) < 0) {
 			kfifo_put(&g_free_q, idx);
@@ -2175,18 +2183,34 @@ static int dvel_frame_ready(struct dvel_ctx *ctx)
 
 int dvel_global_init(int width, int height, int bit_depth)
 {
+	unsigned long flags;
 	int ret;
 
-	if (g_dvel_ctx)
-		return -EBUSY;
+	spin_lock_irqsave(&dvel_lock, flags);
+	if (g_dvel_ctx) {
+		/* Already initialized — reinit only if dimensions or bit depth changed */
+		if (g_dvel_ctx->width == width &&
+		    g_dvel_ctx->height == height &&
+		    g_dvel_ctx->bit_depth == bit_depth) {
+			spin_unlock_irqrestore(&dvel_lock, flags);
+			return 0;
+		}
+		/* Dimensions changed: tear down and reinit */
+		spin_unlock_irqrestore(&dvel_lock, flags);
+		dvel_global_exit();
+		spin_lock_irqsave(&dvel_lock, flags);
+	}
 
 	ret = dvel_provider_init();
-	if (ret < 0)
+	if (ret < 0) {
+		spin_unlock_irqrestore(&dvel_lock, flags);
 		return ret;
+	}
 
-	g_dvel_ctx = kzalloc(sizeof(struct dvel_ctx), GFP_KERNEL);
+	g_dvel_ctx = kzalloc(sizeof(struct dvel_ctx), GFP_ATOMIC);
 	if (!g_dvel_ctx) {
 		dvel_provider_exit();
+		spin_unlock_irqrestore(&dvel_lock, flags);
 		return -ENOMEM;
 	}
 
@@ -2195,36 +2219,82 @@ int dvel_global_init(int width, int height, int bit_depth)
 		kfree(g_dvel_ctx);
 		g_dvel_ctx = NULL;
 		dvel_provider_exit();
+		spin_unlock_irqrestore(&dvel_lock, flags);
 		return ret;
 	}
 
+	/* Pre-allocate all pool picture buffers (process context or ISR-safe GFP_ATOMIC).
+	 * This ensures dvel_frame_ready() never needs to allocate memory in the ISR.
+	 */
+	if (g_pool) {
+		int i;
+		for (i = 0; i < DVEL_FRAME_POOL_SIZE; i++) {
+			if (!g_pool->pic[i].y) {
+				if (dvel_pool_pic_alloc(&g_pool->pic[i],
+							width, height, bit_depth) < 0) {
+					pr_err("dvel: failed to pre-allocate pool[%d]\n", i);
+				}
+			}
+		}
+	}
+
+	spin_unlock_irqrestore(&dvel_lock, flags);
 	return 0;
 }
 EXPORT_SYMBOL(dvel_global_init);
 
 int dvel_global_decode(const u8 *nal, int size, int poc)
 {
+	unsigned long flags;
 	int ret;
 
-	if (!g_dvel_ctx)
+	spin_lock_irqsave(&dvel_lock, flags);
+	if (!g_dvel_ctx) {
+		spin_unlock_irqrestore(&dvel_lock, flags);
 		return -EINVAL;
+	}
 
 	ret = dvel_decode(g_dvel_ctx, nal, size, poc);
-	if (ret < 0)
+	if (ret < 0) {
+		spin_unlock_irqrestore(&dvel_lock, flags);
 		return ret;
+	}
 
-	dvel_frame_ready(g_dvel_ctx);
-	return 0;
+	ret = dvel_frame_ready(g_dvel_ctx);
+	spin_unlock_irqrestore(&dvel_lock, flags);
+	return ret;
 }
 EXPORT_SYMBOL(dvel_global_decode);
 
 void dvel_global_exit(void)
 {
+	unsigned long flags;
+
+	spin_lock_irqsave(&dvel_lock, flags);
 	if (g_dvel_ctx) {
 		dvel_exit(g_dvel_ctx);
 		kfree(g_dvel_ctx);
 		g_dvel_ctx = NULL;
 	}
+	spin_unlock_irqrestore(&dvel_lock, flags);
+
+	/* Drain the ready queue before tearing down the provider.
+	 * This prevents use-after-free if dovi.ko still holds a vframe reference.
+	 */
+	if (g_pool) {
+		struct vframe_s *vf;
+		while (kfifo_get(&g_ready_q, &vf)) {
+			/* Return to free pool */
+			int idx;
+			for (idx = 0; idx < DVEL_FRAME_POOL_SIZE; idx++) {
+				if (&g_pool->vf[idx] == vf) {
+					kfifo_put(&g_free_q, idx);
+					break;
+				}
+			}
+		}
+	}
+
 	dvel_provider_exit();
 }
 EXPORT_SYMBOL(dvel_global_exit);

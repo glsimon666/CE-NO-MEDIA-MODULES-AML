@@ -13565,14 +13565,25 @@ force_output:
 									}
 									if (hevc->frame_width && hevc->frame_height) {
 										int bd = hevc->bit_depth_luma ? : 8;
-										dvel_global_init(hevc->frame_width,
+										int dvel_ret;
+										dvel_ret = dvel_global_init(hevc->frame_width,
 											hevc->frame_height, bd);
-										dvel_global_decode(data + i,
+										if (dvel_ret < 0)
+											hevc_print(hevc, 0,
+												"dvel: init error %d\n",
+												dvel_ret);
+										dvel_ret = dvel_global_decode(data + i,
 											nal_end - i, hevc->curr_POC);
-										hevc_print(hevc, H265_DEBUG_DV,
-											"dvel: decoded EL nal poc %d "
-											"size %d\n",
-											hevc->curr_POC, nal_end - i);
+										if (dvel_ret < 0)
+											hevc_print(hevc, 0,
+												"dvel: decode error %d "
+												"poc %d\n",
+												dvel_ret, hevc->curr_POC);
+										else
+											hevc_print(hevc, H265_DEBUG_DV,
+												"dvel: decoded EL nal poc %d "
+												"size %d\n",
+												hevc->curr_POC, nal_end - i);
 									}
 									break;
 								}
