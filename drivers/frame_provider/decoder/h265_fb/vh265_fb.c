@@ -11914,6 +11914,12 @@ static int prepare_display_buf(struct vdec_s *vdec, struct PIC_s *frame)
 	if (post_prepare_process(vdec, frame))
 		return -1;
 
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
+	/* write suffix aux data while buffer is still valid */
+	if (vdec->master == NULL && vdec->slave == NULL)
+		set_aux_data(hevc, frame, 1, 0); /*suffix*/
+#endif
+
 	if (post_video_frame(vdec, frame))
 		return -1;
 
