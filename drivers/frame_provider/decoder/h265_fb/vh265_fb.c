@@ -8754,7 +8754,7 @@ static int hevc_slice_segment_header_process(struct hevc_state_s *hevc,
 				vdec->slave == NULL)
 				set_aux_data(hevc, hevc->cur_pic, 0, 0); /*prefix*/
 
-			if (hevc->bypass_dvenl && !dolby_meta_with_el)
+			if (hevc->bypass_dvenl && !dolby_meta_with_el && vdec->slave)
 				set_aux_data(hevc, hevc->cur_pic, 0, 2); /*pre sei only*/
 #else
 			set_aux_data(hevc, hevc->cur_pic, 0, 0);
@@ -10880,7 +10880,7 @@ static int vh265_event_cb(int type, void *data, void *op_arg)
 			req->aux_buf = hevc->m_PIC[index]->aux_data_buf;
 			req->aux_size = hevc->m_PIC[index]->aux_data_size;
 #ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
-			if (hevc->bypass_dvenl && !dolby_meta_with_el)
+			if (hevc->bypass_dvenl && !dolby_meta_with_el && vdec->slave)
 				req->dv_enhance_exist = false;
 			else
 				req->dv_enhance_exist =
