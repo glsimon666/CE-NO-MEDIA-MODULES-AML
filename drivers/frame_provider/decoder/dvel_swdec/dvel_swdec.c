@@ -1823,6 +1823,11 @@ int dvel_init(struct dvel_ctx *ctx, int width, int height, int bit_depth)
 	ctx->sps.chroma_format_idc = DVEL_CHROMA_420;
 	ctx->sps_valid = true;
 
+	ctx->pps.pps_id = 0;
+	ctx->pps.sps_id = 0;
+	ctx->pps.init_qp = 0;
+	ctx->pps_valid = true;
+
 	/* Allocate output frame buffer.
 	 * Called from dvel_global_init which may run in ISR context,
 	 * so use GFP_ATOMIC.
