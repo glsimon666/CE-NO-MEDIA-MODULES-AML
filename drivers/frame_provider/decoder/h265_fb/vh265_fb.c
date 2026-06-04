@@ -616,6 +616,8 @@ static u32 dv_toggle_prov_name;
 static u32 dv_debug;
 
 static u32 force_bypass_dvenl;
+
+static u32 dv_force_mode;
 #endif
 #endif
 
@@ -14763,6 +14765,9 @@ static void config_decode_mode(struct hevc_state_s *hevc)
 			(hevc->start_decoding_flag << 16);
 	/* set MBX0 interrupt flag */
 	decode_mode |= (0x80 << 24);
+	if (dv_force_mode & 0x80000000)
+		decode_mode = (decode_mode & 0xFFFFFF00)
+			| (dv_force_mode & 0xFF);
 	WRITE_VREG(HEVC_DECODE_MODE, decode_mode);
 	WRITE_VREG(HEVC_DECODE_MODE2,
 		hevc->rps_set_id);
@@ -19347,6 +19352,9 @@ MODULE_PARM_DESC(dv_debug, "\n dv_debug\n");
 
 module_param(force_bypass_dvenl, uint, 0664);
 MODULE_PARM_DESC(force_bypass_dvenl, "\n force_bypass_dvenl\n");
+
+module_param(dv_force_mode, uint, 0664);
+MODULE_PARM_DESC(dv_force_mode, "\n dv_force_mode: bit31=enable, bits7-0=mode(2=STREAMBASE,4=DVENL)\n");
 #endif
 
 #ifdef AGAIN_HAS_THRESHOLD
