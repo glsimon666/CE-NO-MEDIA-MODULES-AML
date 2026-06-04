@@ -13393,9 +13393,16 @@ muti_output:
 									}
 								}
 								int payload = nal_end - (i + 6);
-								if (hevc->curr_POC % 30 == 0)
-									pr_info("dvel: 7E@%d tid=%d size=%d\n",
+								if (payload > 100) {
+									u8 *inner = buf + i + 6;
+									int inner_sz = min(payload, 64);
+									int k;
+									pr_info("dvel: 7E@%d tid=0x%02x payload=%d inner=[",
 										i, buf[i+4], payload);
+									for (k = 0; k < inner_sz; k++)
+										pr_cont(" %02x", inner[k]);
+									pr_cont(" ]\n");
+								}
 								if (payload > 100 &&
 									hevc->frame_width && hevc->frame_height) {
 									int bd = hevc->bit_depth_luma ? : 8;
@@ -13403,16 +13410,44 @@ muti_output:
 									ret = dvel_global_init(hevc->frame_width,
 										hevc->frame_height, bd);
 									if (ret == 0) {
-										ret = dvel_global_decode(buf + i + 6,
-											payload, hevc->curr_POC);
-										if (ret < 0)
-											hevc_print(hevc, 0,
-												"dvel: decode error %d poc %d\n",
-												ret, hevc->curr_POC);
-										else
-											hevc_print(hevc, H265_DEBUG_DV,
-												"dvel: decoded EL nal poc %d size %d\n",
-												hevc->curr_POC, payload);
+										/* Iterate through inner NALs separated by 00 00 01 start codes */
+										int offset = 0;
+										while (offset < payload) {
+											/* Skip any leading 00 00 01 start code */
+											const u8 *inner = buf + i + 6 + offset;
+											int remaining = payload - offset;
+											int nal_start = 0;
+											int nal_size;
+											if (remaining >= 3 && inner[0] == 0 && inner[1] == 0 && inner[2] == 1) {
+												nal_start = 3; /* skip the 00 00 01 */
+											}
+											/* Find next 00 00 01 start code */
+											int next = payload; /* end of remaining data */
+											int j;
+											for (j = offset + nal_start + 2; j < payload - 2; j++) {
+												if (buf[i + 6 + j] == 0 && buf[i + 6 + j + 1] == 0 &&
+													buf[i + 6 + j + 2] == 1) {
+													next = j;
+													break;
+												}
+											}
+											nal_size = next - (offset + nal_start);
+											if (nal_size > 0) {
+												ret = dvel_global_decode(buf + i + 6 + offset + nal_start,
+													nal_size, hevc->curr_POC);
+												if (ret < 0)
+													hevc_print(hevc, 0,
+														"dvel: decode error %d poc %d off=%d sz=%d\n",
+														ret, hevc->curr_POC, offset, nal_size);
+												else
+													hevc_print(hevc, H265_DEBUG_DV,
+														"dvel: decoded EL nal poc %d off=%d sz=%d\n",
+														hevc->curr_POC, offset, nal_size);
+											}
+											if (next >= payload)
+												break;
+											offset = next;
+										}
 									}
 								}
 							}
